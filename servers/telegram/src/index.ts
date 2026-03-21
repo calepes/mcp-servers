@@ -5,6 +5,7 @@ import { z } from "zod";
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
+  MCP_TELEGRAM: DurableObjectNamespace;
 }
 
 const TELEGRAM_API = "https://api.telegram.org";
@@ -96,12 +97,12 @@ export default {
 
     if (url.pathname === "/sse" || url.pathname === "/sse/message") {
       // @ts-ignore
-      return TelegramMCP.serveSSE("/sse").fetch(request, env, ctx);
+      return TelegramMCP.serveSSE("/sse", { binding: "MCP_TELEGRAM" }).fetch(request, env, ctx);
     }
 
     if (url.pathname === "/mcp" || url.pathname === "/mcp/message") {
       // @ts-ignore
-      return TelegramMCP.serve("/mcp").fetch(request, env, ctx);
+      return TelegramMCP.serve("/mcp", { binding: "MCP_TELEGRAM" }).fetch(request, env, ctx);
     }
 
     return new Response("MCP Telegram Server", { status: 200 });
