@@ -21,6 +21,8 @@ npm -w mcp-apple-reminders run build
 | `naabol-flights` | `getFlight`, `getFlights`, `getAirportFlights` | Wraps CLI `~/Claude Projects/Personal/Apps/Aeropuertos Bolivia/cli/consultar-vuelo.mjs` |
 | `youtube-transcribe` | `transcribeYoutube` | Captions fast-path + whisper local fallback |
 | `feedbin` | `getUnreadCount`, `getUnreadEntries`, `getEntryContent`, `markRead`, `searchEntries` | Requiere env `FEEDBIN_USERNAME`, `FEEDBIN_PASSWORD` |
+| `serpapi-flights` | `searchFlights`, `getReturnFlights` | Google Flights via SerpAPI. Requiere env `SERPAPI_KEY` (en `~/.cos-agent/.env`) |
+| `combustible` | `getFuelStatus` | Disponibilidad gasolina 27 estaciones Santa Cruz + dist Google Maps + links por estación. Requiere env `GOOGLE_MAPS_API_KEY` (fallback: `~/.combustible-mcp.env`). Worker: `combustible-proxy.carlos-cb4.workers.dev/api/stations`. Wired en Vesta (usa `FAMILY_GOOGLE_MAPS_API_KEY`) y Jano. |
 
 ## Docs por servidor
 
