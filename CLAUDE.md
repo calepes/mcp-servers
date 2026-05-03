@@ -20,7 +20,7 @@ npm -w mcp-apple-reminders run build
 | `exchange-rate-bolivia` | `getBcbRate`, `getBinanceP2PRate` | Scrape BCB + Binance P2P USDT/BOB. Cache 60s in-memory |
 | `naabol-flights` | `getFlight`, `getFlights`, `getAirportFlights` | Wraps CLI `~/Claude Projects/Personal/Apps/Aeropuertos Bolivia/cli/consultar-vuelo.mjs` |
 | `youtube-transcribe` | `transcribeYoutube` | Captions fast-path + whisper local fallback |
-| `feedbin` | `getUnreadCount`, `getUnreadEntries`, `getEntryContent`, `markRead`, `searchEntries` | Requiere env `FEEDBIN_USERNAME`, `FEEDBIN_PASSWORD` |
+| `feedbin` | `getUnreadCount`, `getUnreadEntries`, `getEntryContent`, `markRead`, `markUnread`, `getSubscriptions`, `searchEntries`, `savePage`, `addSubscription`, `deleteSubscription` | Requiere env `FEEDBIN_USERNAME`, `FEEDBIN_PASSWORD`. Gotcha: `getSubscriptions()` expone `subscription_id` (`s.id`) y `feed_id` — son distintos. Usar `subscription_id` para DELETE, no `feed_id` |
 | `serpapi-flights` | `searchFlights`, `getReturnFlights` | Google Flights via SerpAPI. Requiere env `SERPAPI_KEY` (en `~/.cos-agent/.env`) |
 | `combustible` | `getFuelStatus` | Disponibilidad gasolina 27 estaciones Santa Cruz + dist Google Maps + links por estación. Requiere env `GOOGLE_MAPS_API_KEY` (fallback: `~/.combustible-mcp.env`). Worker: `combustible-proxy.carlos-cb4.workers.dev/api/stations`. Wired en Vesta (usa `FAMILY_GOOGLE_MAPS_API_KEY`) y Jano. |
 
@@ -43,6 +43,45 @@ El SDK Node NO lee `~/.claude/.mcp.json` — registrar explícitamente en `BASE_
 "<name>": { type: "stdio", command: "node", args: ["/abs/path/dist/index.js"], env: { ... } }
 ```
 Y agregar `"mcp__<name>__<tool>"` a `allowedTools` en `agent-options.ts`.
+
+## MCPs remotos (via mcp-remote)
+
+Para MCPs HTTP/SSE externos (no stdio), usar `mcp-remote` como bridge:
+
+```bash
+npm install -g mcp-remote  # instalar una vez
+# path: /Users/calepes/.npm-global/bin/mcp-remote
+```
+
+Registro en `BASE_OPTIONS.mcpServers` del daemon:
+```typescript
+"readwise": {
+  type: "stdio",
+  command: "/Users/calepes/.npm-global/bin/mcp-remote",
+  args: ["https://mcp2.readwise.io/mcp", "--header", `Authorization: Token ${TOKEN}`],
+}
+```
+
+Registro en `~/.claude/.mcp.json` (para sesiones interactivas):
+```json
+"readwise": { "type": "url", "url": "https://mcp2.readwise.io/mcp", "headers": { "Authorization": "Token TOKEN" } }
+```
+
+**Gotcha testing con bash:** `echo '{"method":"tools/list",...}' | mcp-remote URL` no funciona (proceso cierra stdin antes del handshake). Usar Node CJS spawn con stdin/stdout y timeouts explícitos para validar tools disponibles.
+
+## Smoke-test rápido de un MCP
+
+Después de `npm -w mcp-<name> run build`, validar tools con Node (bash pipe no funciona con mcp-remote ni con servidores que esperan handshake):
+
+```bash
+node -e "
+const { spawn } = require('child_process');
+const p = spawn('node', ['/abs/path/dist/index.js']);
+p.stdin.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})+'\n');
+p.stdout.once('data', d => { console.log(d.toString()); p.kill(); });
+setTimeout(() => p.kill(), 3000);
+"
+```
 
 ## Gotcha reminders-cli
 

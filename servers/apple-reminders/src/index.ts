@@ -109,6 +109,7 @@ async function addItem(
   title: string,
   notes?: string,
   dueIso?: string,
+  priority?: number,
 ): Promise<void> {
   const args = ["add", list, title];
   if (notes?.trim()) args.push("--notes", notes);
@@ -123,6 +124,7 @@ async function addItem(
       args.push("--due-date", `${yyyy}-${mm}-${dd} ${hh}:${mi}`);
     }
   }
+  if (priority !== undefined) args.push("--priority", String(priority));
   await execReminders(args);
 }
 
@@ -206,7 +208,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "addReminder",
       description:
-        "Agrega un recordatorio a una lista de iOS Reminders. Listas comunes: 'Mercado' (compras) y 'Tareas Familia'. dueIso en ISO 8601 con offset ej: '2026-04-30T18:00:00-04:00'.",
+        "Agrega un recordatorio a una lista de iOS Reminders. Listas comunes: 'Mercado' (compras) y 'Tareas Familia'. dueIso en ISO 8601 con offset ej: '2026-04-30T18:00:00-04:00'. priority: 0=ninguna, 1=alta, 5=media, 9=baja.",
       inputSchema: {
         type: "object",
         properties: {
@@ -214,6 +216,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           title: { type: "string" },
           notes: { type: "string" },
           dueIso: { type: "string", description: "ISO 8601 con timezone offset" },
+          priority: { type: "number", description: "0=ninguna 1=alta 5=media 9=baja" },
         },
         required: ["list", "title"],
         additionalProperties: false,
@@ -278,10 +281,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { list } = args as { list: string };
       data = { items: await listItems(list) };
     } else if (name === "addReminder") {
-      const { list, title, notes, dueIso } = args as {
-        list: string; title: string; notes?: string; dueIso?: string;
+      const { list, title, notes, dueIso, priority } = args as {
+        list: string; title: string; notes?: string; dueIso?: string; priority?: number;
       };
-      await addItem(list, title, notes, dueIso);
+      await addItem(list, title, notes, dueIso, priority);
       data = { ok: true, list, title };
     } else if (name === "completeReminder") {
       const { list, externalId } = args as { list: string; externalId: string };
