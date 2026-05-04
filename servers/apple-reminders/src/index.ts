@@ -150,14 +150,27 @@ async function editItem(
   const idx = parseInt(externalId, 10);
   if (Number.isNaN(idx) || idx < 0)
     throw new Error(`editReminder: externalId inválido "${externalId}" — usar el index de listReminders`);
-  const args = ["edit", list, String(idx)];
-  if (title?.trim()) args.push("--title", title);
-  if (notes?.trim()) args.push("--notes", notes);
-  if (dueIso) {
-    const cliDate = isoToCliDate(dueIso);
-    if (cliDate) args.push("--due-date", cliDate);
+  // reminders-cli (keith/reminders-cli 2.5.1) NO soporta --priority ni --due-date en edit.
+  // Solo permite editar title (positional) y --notes. Si se pasan, lanzar error claro
+  // en vez de fallar silencioso. Migración a MCP con EventKit pendiente — ver backlog.
+  if (priority !== undefined) {
+    throw new Error(
+      `editReminder: 'priority' no es editable con la versión actual del CLI underlying ` +
+      `(reminders-cli ${"2.5.1"} solo soporta title y notes en edit). ` +
+      `Para cambiar prioridad: deleteReminder + addReminder con la nueva priority. ` +
+      `Migración a MCP con EventKit pendiente en backlog.`
+    );
   }
-  if (priority !== undefined) args.push("--priority", String(priority));
+  if (dueIso) {
+    throw new Error(
+      `editReminder: 'dueDate' no es editable con la versión actual del CLI underlying ` +
+      `(reminders-cli ${"2.5.1"} solo soporta title y notes en edit). ` +
+      `Para cambiar fecha: deleteReminder + addReminder con la nueva dueDate.`
+    );
+  }
+  const args = ["edit", list, String(idx)];
+  if (notes?.trim()) args.push("--notes", notes);
+  if (title?.trim()) args.push(title);
   await execReminders(args);
 }
 
