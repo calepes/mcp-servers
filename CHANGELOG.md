@@ -1,5 +1,12 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-04
+
+### Docs — gotcha "outputs descriptivos confunden al LLM"
+
+- Agregado principio general en `CLAUDE.md`: MCPs que wrapean CLIs no deben emitir campos descriptivos sobre estado parcial ("endpoint caído", "datos limitados", "fallback activo") cuando los datos siguen siendo válidos. El LLM tiende a repetir esos textos al usuario y bloquearse aunque el payload tenga lo que pidió.
+- Caso real: `naabol-flights` con campo `nota` que confundía a Jano (fix aplicado en el CLI underlying `consultar-vuelo.mjs`, no en el MCP wrapper).
+
 ## 2026-05-02
 
 ### Feedbin — write tools + fix subscription_id

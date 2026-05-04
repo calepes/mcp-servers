@@ -86,3 +86,17 @@ setTimeout(() => p.kill(), 3000);
 ## Gotcha reminders-cli
 
 Versiones nuevas devuelven UUIDs en el campo `externalId` del JSON, pero los comandos `complete` y `delete` solo aceptan índice entero. En `listItems()` siempre usar `String(idx)` como `externalId`, ignorar `r.externalId`.
+
+## Gotcha: `keith/reminders-cli 2.5.1` `edit` limitado (2026-05-04)
+
+El CLI `reminders` (Swift signed, instalado via `brew install keith/formulae/reminders-cli`) solo soporta `--notes` y title positional en `edit`. **NO soporta `--priority` ni `--due-date`**: si se pasan, los ignora silenciosamente (exit 0 sin actualizar). El MCP `apple-reminders` ahora throw-ea error claro en `editReminder` cuando se intenta priority/dueDate (antes fallaba silencioso). Para esos cambios: `deleteReminder + addReminder` con la nueva property.
+
+**Plan de migración a MCP con EventKit nativo** (priority + recurring + location + multiple alarms reales): backlog en `Personal/Agents/Jano/BACKLOG.md` sección "Migración MCP apple-reminders → EventKit". Opciones evaluadas (todas requieren Xcode full salvo snarris):
+- **Krishna-Desiraju/apple-reminders-swift-mcp-server**: Swift+EventKit, solo Reminders, 12 tools (recurring + location + alarms).
+- **omarshahine/Apple-PIM-Agent-Plugin**: Swift+EventKit+JXA, dual Claude Code/OpenClaw, incluye Calendar+Reminders+Contacts+Mail (4 dominios).
+- **snarris/apple-eventkit-mcp**: Python+PyObjC+EventKit, sin Xcode requirement, Calendar+Reminders pero menos features.
+- **steipete/macos-automator-mcp**: Node + AppleScript/JXA wrapper genérico — NO sirve desde launchd (TCC deny).
+
+## Gotcha: outputs descriptivos confunden al LLM
+
+MCPs que wrapean CLIs no deben emitir campos descriptivos sobre estado parcial ("endpoint caído", "datos limitados", "fallback activo") cuando los datos siguen siendo válidos. El LLM tiende a repetir esos textos al usuario y bloquearse aunque el payload tenga lo que pidió. Caso real: `naabol-flights` con campo `nota` (fix 2026-05-04 — ahora solo aparece cuando no hay matches). Regla: outputs minimalistas, errores solo cuando hay error real (no en degradación parcial con datos útiles).
