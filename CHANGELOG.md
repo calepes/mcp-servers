@@ -1,5 +1,15 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-10
+
+### Health — Endpoint /measurements + MCP tool getHealthMeasurements
+- **Confirmado**: `/trend` usa `SUM` para métricas no-sleep (`health-worker/src/index.ts:178`), `MAX` para sleep — RMSSD mostraba 228-403ms por suma de lecturas diarias (valor real: 20-80ms).
+- **Feature**: nuevo endpoint `GET /measurements` en `health.carlos-cb4.workers.dev` — filas individuales `{id, metric, value, unit, date, timestamp}` con filtros `start/end/metrics[]/limit/cursor`.
+- **MCP**: tool `getHealthMeasurements` añadida a `servers/health/src/index.ts`. `getHealthTrend` intacto.
+
+### Shared — vuelos-naabol-format.ts
+- **Nuevo**: `shared/vuelos-naabol-format.ts` exporta constante `VUELOS_NAABOL_INSTRUCTIONS` — instrucciones canónicas de formato para `getAirportFlights` (tabla de vuelos bolivianos). Importado por Jano y Vesta vía `tsconfig rootDirs`. Para cambiar el formato NAABOL, editar solo este archivo.
+
 ## 2026-05-04
 
 ### Docs — gotcha "outputs descriptivos confunden al LLM"

@@ -2,6 +2,10 @@
 
 npm workspaces. Todos los servidores en `servers/`. Registrados globalmente en `~/.claude/.mcp.json`.
 
+## Shared
+
+`shared/vuelos-naabol-format.ts` — constante `VUELOS_NAABOL_INSTRUCTIONS` para formato de vuelos NAABOL (instrucciones del tool `getAirportFlights`). Importada por Jano y Vesta. No es workspace npm — los daemons la referencian via `rootDirs: ["src", "../../../../MCP Servers/mcp-servers/shared"]` en su `tsconfig.json`. Para cambiar el formato de vuelos, editar este archivo (no los system-prompts de Jano ni Vesta directamente).
+
 ## Build
 
 ```bash

@@ -86,6 +86,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
       ...READ_ONLY,
     },
+    {
+      name: "getHealthMeasurements",
+      description:
+        "Filas individuales de Apple Health con timestamp exacto, métrica, valor y unidad. Útil para calcular promedios reales (ej. RMSSD/HRV) en lugar de usar los agregados diarios de /trend que usan SUM. Soporta filtros por rango de fechas, lista de métricas y paginación. Args: { start?: 'YYYY-MM-DD', end?: 'YYYY-MM-DD', metrics?: string[] (ej. ['heart_rate_variability', 'resting_heart_rate']), limit?: int (default 500, max 1000), cursor?: int (offset para paginación) }.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          start: { type: "string", description: "Fecha inicio YYYY-MM-DD (inclusive)" },
+          end:   { type: "string", description: "Fecha fin YYYY-MM-DD (inclusive)" },
+          metrics: {
+            type: "array",
+            items: { type: "string" },
+            description: "Lista de métricas a filtrar (vacío = todas). Ej: ['heart_rate_variability', 'resting_heart_rate']",
+          },
+          limit:  { type: "number", description: "Máximo de filas a retornar (default 500, max 1000)" },
+          cursor: { type: "number", description: "Offset de paginación (usar next_cursor del response anterior)" },
+        },
+        additionalProperties: false,
+      },
+      ...READ_ONLY,
+    },
   ],
 }));
 
@@ -103,6 +124,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { days = 7, category } = args as { days?: number; category?: string };
       const cat = category ? `&type=${encodeURIComponent(category)}` : "";
       data = await fetchHealth(`/workouts/summary?days=${days}${cat}`);
+    } else if (name === "getHealthMeasurements") {
+      const { start, end, metrics, limit, cursor } = args as {
+        start?: string;
+        end?: string;
+        metrics?: string[];
+        limit?: number;
+        cursor?: number;
+      };
+      const params = new URLSearchParams();
+      if (start)   params.set("start", start);
+      if (end)     params.set("end", end);
+      if (metrics && metrics.length > 0) params.set("metrics", metrics.join(","));
+      if (limit != null)  params.set("limit", String(limit));
+      if (cursor != null) params.set("cursor", String(cursor));
+      const qs = params.toString();
+      data = await fetchHealth(`/measurements${qs ? `?${qs}` : ""}`);
     } else {
       return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
     }
