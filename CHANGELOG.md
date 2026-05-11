@@ -1,5 +1,19 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-11
+
+### panini-mundial — MCP nuevo + descripción álbum Grupos A y B
+
+- **Nuevo servidor MCP** `panini-mundial`: 7 tools para gestionar el álbum Panini FIFA World Cup 2026 de Cal y Noe. Backend: Notion DB `35cc487609dd80868b1dc68095a6f84f`. Acepta nombres en español e inglés. Wired en Jano y Vesta.
+- **Tools:** `paniniProgress`, `paniniSection`, `paniniMissing`, `paniniDuplicates`, `paniniRegister`, `paniniRemove`, `paniniSearch`.
+- **Script `update-paginas.mjs`:** bulk-set del campo `Pagina` para 968/981 stickers (13 FWC skip — faltan fotos páginas 4-7).
+- **Descripción Grupos A y B:** pobladas 160 entradas (MEX, RSA, KOR, CZE, CAN, BIH, QAT, SUI — 8 secciones × 20) desde fotos del álbum físico. Placeholders reemplazados por nombres de jugadores, escudos y fotos grupales reales.
+- **Fix FWC:** corregidas descripciones de FWC 1, 5, 6, 7, 8 (emblemas y balón oficial); FWC 2-4 no confirmadas por foto.
+
+### Jano — fix prefijo Notion en CLAUDE.md
+
+- **Fix docs:** `mcp__notion__notion-query-database-view` y `mcp__notion__.*` corregidos a `mcp__claude_ai_Notion__*` en dos lugares del CLAUDE.md de Jano (líneas 265 y 373).
+
 ## 2026-05-10
 
 ### Health — Endpoint /measurements + MCP tool getHealthMeasurements

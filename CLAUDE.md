@@ -27,6 +27,7 @@ npm -w mcp-apple-reminders run build
 | `feedbin` | `getUnreadCount`, `getUnreadEntries`, `getEntryContent`, `markRead`, `markUnread`, `getSubscriptions`, `searchEntries`, `savePage`, `addSubscription`, `deleteSubscription` | Requiere env `FEEDBIN_USERNAME`, `FEEDBIN_PASSWORD`. Gotcha: `getSubscriptions()` expone `subscription_id` (`s.id`) y `feed_id` — son distintos. Usar `subscription_id` para DELETE, no `feed_id` |
 | `serpapi-flights` | `searchFlights`, `getReturnFlights` | Google Flights via SerpAPI. Requiere env `SERPAPI_KEY` (en `~/.cos-agent/.env`) |
 | `combustible` | `getFuelStatus` | Disponibilidad gasolina 27 estaciones Santa Cruz + dist Google Maps + links por estación. Requiere env `GOOGLE_MAPS_API_KEY` (fallback: `~/.combustible-mcp.env`). Worker: `combustible-proxy.carlos-cb4.workers.dev/api/stations`. Wired en Vesta (usa `FAMILY_GOOGLE_MAPS_API_KEY`) y Jano. |
+| `panini-mundial` | `paniniProgress`, `paniniSection`, `paniniMissing`, `paniniDuplicates`, `paniniRegister`, `paniniRemove`, `paniniSearch` | Álbum Panini FIFA World Cup 2026 de Cal y Noe. Backend: Notion DB `35cc487609dd80868b1dc68095a6f84f`. Requiere env `NOTION_TOKEN` (token integración Claude CoS), `PANINI_DB_ID`. Wired en Jano y Vesta. Ver docs en `servers/panini-mundial/docs/`. |
 
 ## Docs por servidor
 
@@ -100,6 +101,18 @@ El CLI `reminders` (Swift signed, instalado via `brew install keith/formulae/rem
 - **omarshahine/Apple-PIM-Agent-Plugin**: Swift+EventKit+JXA, dual Claude Code/OpenClaw, incluye Calendar+Reminders+Contacts+Mail (4 dominios).
 - **snarris/apple-eventkit-mcp**: Python+PyObjC+EventKit, sin Xcode requirement, Calendar+Reminders pero menos features.
 - **steipete/macos-automator-mcp**: Node + AppleScript/JXA wrapper genérico — NO sirve desde launchd (TCC deny).
+
+## Panini Mundial — Álbum estructura y estado
+
+**Estructura:** 981 láminas = 20 FWC (sección "Introducción", Foil) + 48 selecciones × 20. Cada selección: #1=Team Badge, #13=Country Badge (multilingual), #2-12 + #14-20=jugadores.
+
+**Campo Pagina:** seteado en bulk via `src/update-paginas.mjs` (run: `NOTION_TOKEN=xxx node src/update-paginas.mjs`). Lógica: stickers 1-10 → página inicio de sección, 11-20 → página inicio + 1. FWC 9-19 y FWC 00 pendientes (faltan fotos páginas 4-7).
+
+**Descripciones (Jugadores):** pobladas seccionalmente desde fotos del álbum físico. Completadas al 2026-05-11: Grupos A y B (8 secciones). Pendiente: Grupos C-L (36 secciones). Placeholders originales: "Jugador N", "Escudo", "Foto grupal".
+
+**Scripts auxiliares** (en `servers/panini-mundial/src/`, corren con `node`, no requieren build):
+- `update-paginas.mjs` — bulk-set campo Pagina para todas las secciones
+- Para updates puntuales de Descripcion: usar snippet inline con `fetch` nativo a `https://api.notion.com/v1/`
 
 ## Gotcha: outputs descriptivos confunden al LLM
 
