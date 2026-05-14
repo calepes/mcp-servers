@@ -1,5 +1,15 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-14
+
+### inversiones-query — MCP nuevo + bug fixes
+
+- **Nuevo servidor MCP** `inversiones-query`: 8 tools para consultar el portafolio de inversiones de Cal. Datos: Kubera (posiciones, valorización, CAGR) + Yahoo Finance (precios en tiempo real) + Airtable (historial transacciones). Wired en Jano y Pecunia.
+- **Tools:** `getPortfolioSummary`, `getDailyMovers`, `getPositionDetail`, `getPortfolioPerformance`, `getPriceHistory`, `getTransactionHistory`, `getPortfolioConcentration`, `searchPosition`.
+- **Fix Kubera v2:** la API devuelve `{ markdown }` (no JSON plano). Agregado parser de tablas markdown en `tools/portfolio.ts` para extraer métricas del `## Summary` y posiciones del `## Assets`.
+- **Fix Yahoo Finance:** `/v7/finance/quote` en `query1` bloqueado con 401 (2026-05). Reemplazado con `/v8/finance/chart/{ticker}` en `query2.finance.yahoo.com`, paralelo por ticker vía `Promise.allSettled`. Cambio diario derivado de `meta.chartPreviousClose`.
+- **Fix movers:** posiciones de cash en Kubera tienen `ticker:"USD"` → Yahoo las mapea al ETF ProShares Ultra Semiconductors. Filtrar currency codes puros + deduplicar tickers antes de llamar Yahoo.
+
 ## 2026-05-11
 
 ### panini-mundial — MCP nuevo + descripción álbum Grupos A y B
