@@ -24,32 +24,49 @@ export class KuberaClient {
       body: payload,
     });
 
+    const raw = await response.text();
+
     if (!response.ok) {
-      throw new Error(`Kubera HTTP ${response.status}: ${await response.text()}`);
+      throw new Error(`Kubera HTTP ${response.status}: ${raw}`);
     }
 
     const contentType = response.headers.get("content-type") ?? "";
-    const raw = await response.text();
 
     if (contentType.includes("text/event-stream")) {
+      // Take first data: line (Kubera returns single-payload SSE events)
       for (const line of raw.split("\n")) {
         if (line.startsWith("data:")) {
-          const parsed = JSON.parse(line.slice(5).trim());
-          return parsed.result;
+          try {
+            const parsed = JSON.parse(line.slice(5).trim());
+            return parsed.result;
+          } catch (e) {
+            throw new Error(`Kubera SSE: failed to parse JSON data: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
       }
       throw new Error("Kubera SSE: no data line found in response");
     }
 
-    const parsed = JSON.parse(raw);
-    return parsed.result;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed.result;
+    } catch (e) {
+      throw new Error(`Kubera: failed to parse JSON response: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Convenience: extract text content from MCP result
   static extractText(result: unknown): string {
-    const r = result as { content: Array<{ type: string; text: string }> };
-    const block = r.content.find((c) => c.type === "text");
+    if (!result || typeof result !== "object") {
+      throw new Error("Kubera: result is not an object");
+    }
+    const r = result as Record<string, unknown>;
+    if (!Array.isArray(r["content"])) {
+      throw new Error("Kubera: result.content is not an array");
+    }
+    const content = r["content"] as Array<Record<string, unknown>>;
+    const block = content.find((c) => c["type"] === "text" && typeof c["text"] === "string");
     if (!block) throw new Error("Kubera: no text content in result");
-    return block.text;
+    return block["text"] as string;
   }
 }
