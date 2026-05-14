@@ -58,7 +58,7 @@ export class AirtableClient {
 
   async getTransactions(): Promise<Transaction[]> {
     const [records, ref] = await Promise.all([
-      this.fetchTable("Transacciones", new URLSearchParams({ sort: "[{field:Fecha,direction:desc}]" })),
+      this.fetchTable("Transacciones", new URLSearchParams({ "sort[0][field]": "Fecha", "sort[0][direction]": "desc" })),
       this.getReference(),
     ]);
 
