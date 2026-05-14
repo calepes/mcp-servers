@@ -29,7 +29,9 @@ export interface DailyMover {
   ticker: string;
   name: string;
   changePct: number;
-  changeUSD: number;
+  changeUSD: number;       // per share
+  shares: number;
+  totalChangeUSD: number;  // changeUSD * shares (portfolio impact)
   currentPrice: number;
   currency: string;
 }

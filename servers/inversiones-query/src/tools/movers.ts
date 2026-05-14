@@ -1,18 +1,44 @@
-import type { DailyMovers, DailyMover, YahooQuote } from "../types.js";
+import type { DailyMovers, DailyMover, YahooQuote, KuberaPosition } from "../types.js";
 import type { KuberaClient } from "../clients/kubera.js";
 import type { YahooClient } from "../clients/yahoo.js";
 import type { Cache } from "../cache.js";
 import { fetchKuberaPortfolio } from "./portfolio.js";
 
 const CACHE_TTL = 60;
+// Bare currency codes that Kubera uses for cash positions — not valid stock tickers.
+const CURRENCY_CODES = new Set(["USD", "EUR", "GBP", "ARS", "PEN", "BOB", "BRL", "CLP", "COP", "MXN"]);
 
-export function buildDailyMovers(quotes: YahooQuote[], n: number): DailyMovers {
+export function buildDailyMovers(
+  quotes: YahooQuote[],
+  positions: KuberaPosition[],
+  n: number
+): DailyMovers {
+  // Sum shares per ticker across all brokers/accounts.
+  const sharesByTicker = new Map<string, number>();
+  for (const p of positions) {
+    if (p.ticker && !CURRENCY_CODES.has(p.ticker)) {
+      sharesByTicker.set(p.ticker, (sharesByTicker.get(p.ticker) ?? 0) + p.quantity);
+    }
+  }
+
+  const toMover = (q: YahooQuote): DailyMover => {
+    const shares = sharesByTicker.get(q.symbol) ?? 0;
+    const changeUSD = Number(q.regularMarketChange.toFixed(4));
+    return {
+      ticker: q.symbol,
+      name: q.shortName,
+      changePct: Number(q.regularMarketChangePercent.toFixed(2)),
+      changeUSD,
+      shares: Number(shares.toFixed(4)),
+      totalChangeUSD: Number((changeUSD * shares).toFixed(2)),
+      currentPrice: q.regularMarketPrice,
+      currency: q.currency,
+    };
+  };
+
   const sorted = [...quotes].sort((a, b) => b.regularMarketChangePercent - a.regularMarketChangePercent);
-  const gainers: DailyMover[] = sorted
-    .filter((q) => q.regularMarketChangePercent > 0)
-    .slice(0, n)
-    .map(toMover);
-  const losers: DailyMover[] = [...quotes]
+  const gainers = sorted.filter((q) => q.regularMarketChangePercent > 0).slice(0, n).map(toMover);
+  const losers = [...quotes]
     .sort((a, b) => a.regularMarketChangePercent - b.regularMarketChangePercent)
     .filter((q) => q.regularMarketChangePercent < 0)
     .slice(0, n)
@@ -27,17 +53,6 @@ export function buildDailyMovers(quotes: YahooQuote[], n: number): DailyMovers {
   return { gainers, losers, marketDate, marketOpen };
 }
 
-function toMover(q: YahooQuote): DailyMover {
-  return {
-    ticker: q.symbol,
-    name: q.shortName,
-    changePct: Number(q.regularMarketChangePercent.toFixed(2)),
-    changeUSD: Number(q.regularMarketChange.toFixed(2)),
-    currentPrice: q.regularMarketPrice,
-    currency: q.currency,
-  };
-}
-
 export async function getDailyMovers(
   kubera: KuberaClient,
   yahoo: YahooClient,
@@ -49,9 +64,6 @@ export async function getDailyMovers(
   if (cached) return cached;
 
   const portfolio = await fetchKuberaPortfolio(kubera);
-  // Deduplicate and filter out bare currency codes (USD/EUR/etc.) that Kubera
-  // uses for cash positions — they map to unrelated ETFs on Yahoo Finance.
-  const CURRENCY_CODES = new Set(["USD", "EUR", "GBP", "ARS", "PEN", "BOB", "BRL", "CLP", "COP", "MXN"]);
   const tickers = [
     ...new Set(
       portfolio.positions
@@ -61,7 +73,7 @@ export async function getDailyMovers(
   ];
 
   const quotes = await yahoo.getBulkQuotes(tickers);
-  const result = buildDailyMovers(quotes, n);
+  const result = buildDailyMovers(quotes, portfolio.positions, n);
   cache.set(cacheKey, result, CACHE_TTL);
   return result;
 }
