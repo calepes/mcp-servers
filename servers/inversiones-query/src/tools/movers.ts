@@ -49,9 +49,16 @@ export async function getDailyMovers(
   if (cached) return cached;
 
   const portfolio = await fetchKuberaPortfolio(kubera);
-  const tickers = portfolio.positions
-    .map((p) => p.ticker)
-    .filter((t): t is string => t !== null && t !== "");
+  // Deduplicate and filter out bare currency codes (USD/EUR/etc.) that Kubera
+  // uses for cash positions — they map to unrelated ETFs on Yahoo Finance.
+  const CURRENCY_CODES = new Set(["USD", "EUR", "GBP", "ARS", "PEN", "BOB", "BRL", "CLP", "COP", "MXN"]);
+  const tickers = [
+    ...new Set(
+      portfolio.positions
+        .map((p) => p.ticker)
+        .filter((t): t is string => t !== null && t !== "" && !CURRENCY_CODES.has(t))
+    ),
+  ];
 
   const quotes = await yahoo.getBulkQuotes(tickers);
   const result = buildDailyMovers(quotes, n);

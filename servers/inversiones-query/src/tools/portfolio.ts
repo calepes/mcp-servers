@@ -126,28 +126,122 @@ export async function getPortfolioPerformance(
   return result;
 }
 
-// Internal: fetch and parse Kubera portfolio (shared across tools in this file)
+// Internal: fetch and parse Kubera portfolio (shared across tools in this file).
+// Kubera API v2 returns { id, name, currency, markdown } — not structured JSON.
+// We parse the markdown tables to extract summary metrics and positions.
 export async function fetchKuberaPortfolio(kubera: KuberaClient): Promise<KuberaPortfolio> {
   const result = await kubera.callTool("get_portfolio", { portfolioId: PORTFOLIO_ID });
   const text = KuberaClient.extractText(result);
 
-  let data: Record<string, unknown> = {};
-  try { data = JSON.parse(text); } catch { /* ignore */ }
+  let outer: Record<string, unknown> = {};
+  try { outer = JSON.parse(text); } catch { /* ignore */ }
 
-  const positions = parsePositions(data);
+  const markdown = typeof outer["markdown"] === "string" ? outer["markdown"] : "";
+  const asOf = String(outer["asOf"] ?? outer["as_of"] ?? new Date().toISOString());
 
+  if (markdown) {
+    return parsePortfolioFromMarkdown(markdown, asOf);
+  }
+
+  // Fallback: legacy structured JSON response (may never occur with v2 API)
+  const positions = parseLegacyPositions(outer);
   return {
-    totalValue: Number(data["totalValue"] ?? data["total_value"] ?? 0),
-    costBasis: Number(data["costBasis"] ?? data["cost_basis"] ?? 0),
-    unrealizedGain: Number(data["unrealizedGain"] ?? data["unrealized_gain"] ?? 0),
-    cagrYTD: Number(data["cagrYTD"] ?? data["cagr_ytd"] ?? 0),
-    cashOnHand: Number(data["cashOnHand"] ?? data["cash_on_hand"] ?? 0),
+    totalValue: Number(outer["totalValue"] ?? outer["total_value"] ?? 0),
+    costBasis: Number(outer["costBasis"] ?? outer["cost_basis"] ?? 0),
+    unrealizedGain: Number(outer["unrealizedGain"] ?? outer["unrealized_gain"] ?? 0),
+    cagrYTD: Number(outer["cagrYTD"] ?? outer["cagr_ytd"] ?? 0),
+    cashOnHand: Number(outer["cashOnHand"] ?? outer["cash_on_hand"] ?? 0),
     positions,
-    asOf: String(data["asOf"] ?? data["as_of"] ?? new Date().toISOString()),
+    asOf,
   };
 }
 
-function parsePositions(data: Record<string, unknown>) {
+// Parse a markdown table section into an array of {header: value} objects.
+// section is the header text (e.g. "Summary", "Assets"). Returns [] if not found.
+function parseMarkdownTable(markdown: string, section: string): Array<Record<string, string>> {
+  const sectionRe = new RegExp(`##\\s+${section}\\s*\\n`);
+  const match = sectionRe.exec(markdown);
+  if (!match) return [];
+
+  const rest = markdown.slice(match.index + match[0].length);
+  const lines = rest.split("\n");
+
+  // Find header row (first line starting with |)
+  const headerIdx = lines.findIndex((l) => l.startsWith("|"));
+  if (headerIdx < 0) return [];
+
+  const headers = lines[headerIdx]
+    .split("|")
+    .slice(1, -1)
+    .map((h) => h.trim());
+
+  // Skip separator row (| ---- |)
+  const dataStart = headerIdx + 2;
+  const rows: Array<Record<string, string>> = [];
+
+  for (let i = dataStart; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith("|")) break; // end of table
+    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+    const row: Record<string, string> = {};
+    headers.forEach((h, idx) => { row[h] = cells[idx] ?? ""; });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+// Parse numeric value from Kubera markdown (e.g. "13,549" → 13549, "-" → 0)
+function parseMd(val: string | undefined): number {
+  if (!val || val === "-") return 0;
+  return Number(val.replace(/,/g, "")) || 0;
+}
+
+function parsePortfolioFromMarkdown(markdown: string, asOf: string): KuberaPortfolio {
+  // Extract summary metrics from ## Summary table
+  const summaryRows = parseMarkdownTable(markdown, "Summary");
+  const summaryMap: Record<string, number> = {};
+  for (const row of summaryRows) {
+    summaryMap[row["Metric"] ?? ""] = parseMd(row["Value"]);
+  }
+
+  const totalValue = summaryMap["Total Assets"] ?? summaryMap["Net Worth"] ?? 0;
+  const costBasis = summaryMap["Cost Basis"] ?? 0;
+  const unrealizedGain = summaryMap["Unrealized Gain"] ?? 0;
+  const cashOnHand = summaryMap["Cash On Hand"] ?? 0;
+
+  // Extract CAGR YTD from ## CAGR table
+  const cagrRows = parseMarkdownTable(markdown, "CAGR");
+  const ytdRow = cagrRows.find((r) => r["Period"] === "YTD");
+  const cagrPct = ytdRow ? parseMd(ytdRow["Net Worth"]?.replace("%", "")) : 0;
+
+  // Extract positions from ## Assets table
+  const assetRows = parseMarkdownTable(markdown, "Assets");
+  const positions = assetRows
+    .filter((r) => r["Name"] && !r["Name"].startsWith("Portfolio -")) // skip rollup rows
+    .map((r) => {
+      // "Sheet > Section" format: "Broker Name > Section"
+      const sheetSection = r["Sheet > Section"] ?? r["Sheet"] ?? "";
+      const broker = sheetSection.split(">")[0].trim();
+      const ticker = r["Ticker"]?.trim() || null;
+      return {
+        custodianId: r["ID"] ?? "",
+        ticker: ticker && ticker.length > 0 ? ticker : null,
+        name: r["Name"] ?? "",
+        value: parseMd(r["Value"] ?? r["Value (USD)"]),
+        costBasis: parseMd(r["Cost"]),
+        quantity: parseMd(r["Quantity"]),
+        broker,
+        assetType: r["Asset Class"] ?? "Other",
+        sector: r["Sector"] ?? "Other",
+        currency: r["Currency"] ?? "USD",
+      };
+    });
+
+  return { totalValue, costBasis, unrealizedGain, cagrYTD: cagrPct, cashOnHand, positions, asOf };
+}
+
+function parseLegacyPositions(data: Record<string, unknown>) {
   const raw = (data["positions"] ?? data["assets"] ?? []) as Array<Record<string, unknown>>;
   return raw.map((p) => ({
     custodianId: String(p["custodianId"] ?? p["id"] ?? ""),
