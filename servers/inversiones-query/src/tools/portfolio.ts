@@ -6,7 +6,7 @@ import type {
   ConcentrationSlice,
   Period,
 } from "../types.js";
-import type { KuberaClient } from "../clients/kubera.js";
+import { KuberaClient } from "../clients/kubera.js";
 import type { Cache } from "../cache.js";
 
 const PORTFOLIO_ID = process.env["KUBERA_INVESTMENTS_ID"] ?? "6bccf4ba-e50d-442b-9f52-5cb3bc64523d";
