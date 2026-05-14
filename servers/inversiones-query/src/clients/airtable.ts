@@ -64,19 +64,28 @@ export class AirtableClient {
 
     return records.map((r) => {
       const f = r.fields;
-      const activoIds = (f["Activo"] as string[] | undefined) ?? [];
+      // "Ticket" is a lookup field that already resolves the ticker string (["SPY"]).
+      // Fallback: dereference "Activo Financiero" linked record via securities map.
+      const ticketLookup = f["Ticket"] as string[] | string | undefined;
+      const activoIds = (f["Activo Financiero"] as string[] | undefined) ?? [];
+      const ticker = Array.isArray(ticketLookup) && ticketLookup.length > 0
+        ? ticketLookup[0]
+        : typeof ticketLookup === "string" && ticketLookup
+        ? ticketLookup
+        : activoIds.length > 0 ? (ref.securities.get(activoIds[0]) ?? "") : "";
+
       const brokerIds = (f["Broker"] as string[] | undefined) ?? [];
-      const ticker = activoIds.length > 0 ? (ref.securities.get(activoIds[0]) ?? activoIds[0]) : "";
       const broker = brokerIds.length > 0 ? (ref.brokers.get(brokerIds[0]) ?? brokerIds[0]) : "";
+
       const shares = Number(f["Cuotas"] ?? 0);
-      const price = Number(f["Precio Unitario"] ?? 0);
-      const fee = Number(f["fee"] ?? 0);
-      const totalAmount = (price + fee) * Math.abs(shares);
+      const price = Number(f["PU - Transaccion"] ?? 0);
+      const fee = Number(f["Fee  ($)"] ?? 0);
+      const totalAmount = Number(f["Valor Transaccion ($)"] ?? (price * Math.abs(shares) + fee));
 
       return {
         date: String(f["Fecha"] ?? ""),
         ticker,
-        type: String(f["Tipo Transaccion"] ?? "Compra") as TransactionType,
+        type: String(f["Tipo de Transaccion"] ?? "Compra") as TransactionType,
         shares,
         pricePerShare: price,
         totalAmount: Number(totalAmount.toFixed(2)),
