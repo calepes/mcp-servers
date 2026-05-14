@@ -92,34 +92,70 @@ export async function getPortfolioPerformance(
   if (cached) return cached;
 
   const [histResult, cagrResult] = await Promise.all([
-    kubera.callTool("get_portfolio_history", { portfolioId: PORTFOLIO_ID, period }),
+    kubera.callTool("get_portfolio_history", { portfolioId: PORTFOLIO_ID, period: "YTD" }),
     kubera.callTool("get_portfolio_cagr", { portfolioId: PORTFOLIO_ID }),
   ]);
 
   const histText = KuberaClient.extractText(histResult);
   const cagrText = KuberaClient.extractText(cagrResult);
 
-  let hist: { startValue: number; endValue: number } = { startValue: 0, endValue: 0 };
-  let cagrValue: number | null = null;
+  // Kubera v2: get_portfolio_history returns { portfolioDataPoints: [{date, value}] }
+  // get_portfolio_cagr returns { cagrOldValues: { ytd_networth, qtd_networth, yearly_networth, ... } }
+  const histData = JSON.parse(histText) as {
+    portfolioDataPoints: Array<{ date: string; value: number }>;
+  };
+  const cagrData = JSON.parse(cagrText) as {
+    cagrOldValues: Record<string, { date: string; oldValue: number }>;
+  };
 
-  try { hist = JSON.parse(histText); } catch { /* ignore */ }
-  try {
-    const cagrData = JSON.parse(cagrText) as { cagrYTD?: number };
-    cagrValue = cagrData.cagrYTD ?? null;
-  } catch { /* ignore */ }
+  const pts = histData.portfolioDataPoints ?? [];
+  const endValue = pts[pts.length - 1]?.value ?? 0;
+  const oldVals = cagrData.cagrOldValues ?? {};
 
-  const delta = hist.endValue - hist.startValue;
-  const deltaPct = hist.startValue ? (delta / hist.startValue) * 100 : 0;
+  let startValue = 0;
+  if (period === "YTD") {
+    startValue = oldVals["ytd_networth"]?.oldValue ?? 0;
+  } else if (period === "QTD") {
+    startValue = oldVals["qtd_networth"]?.oldValue ?? 0;
+  } else if (period === "1Y") {
+    startValue = oldVals["yearly_networth"]?.oldValue ?? 0;
+  } else {
+    // 1D, 1W, 1M: find the last point at or before the cutoff date
+    const daysBack = period === "1D" ? 1 : period === "1W" ? 7 : 30;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysBack);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const startPt = [...pts].reverse().find((p) => p.date <= cutoffStr);
+    startValue = startPt?.value ?? endValue;
+  }
+
+  const delta = endValue - startValue;
+  const deltaPct = startValue ? (delta / startValue) * 100 : 0;
   const shortPeriods: Period[] = ["1D", "1W"];
-  const cagr = shortPeriods.includes(period) ? null : cagrValue;
+
+  // Compute annualized return for longer periods
+  let cagr: number | null = null;
+  if (!shortPeriods.includes(period) && startValue > 0 && endValue > 0) {
+    const startDateStr = period === "YTD"
+      ? (oldVals["ytd_networth"]?.date ?? null)
+      : period === "QTD"
+      ? (oldVals["qtd_networth"]?.date ?? null)
+      : period === "1Y"
+      ? (oldVals["yearly_networth"]?.date ?? null)
+      : null;
+    if (startDateStr) {
+      const years = (Date.now() - new Date(startDateStr).getTime()) / (365.25 * 24 * 3600 * 1000);
+      cagr = years > 0 ? (Math.pow(endValue / startValue, 1 / years) - 1) * 100 : deltaPct;
+    }
+  }
 
   const result: PortfolioPerformance = {
     period,
-    startValue: hist.startValue,
-    endValue: hist.endValue,
+    startValue: Number(startValue.toFixed(2)),
+    endValue: Number(endValue.toFixed(2)),
     deltaUSD: Number(delta.toFixed(2)),
     deltaPct: Number(deltaPct.toFixed(2)),
-    cagr,
+    cagr: cagr !== null ? Number(cagr.toFixed(2)) : null,
   };
 
   cache.set(cacheKey, result, CACHE_TTL);
