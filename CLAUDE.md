@@ -28,7 +28,7 @@ npm -w mcp-apple-reminders run build
 | `serpapi-flights` | `searchFlights`, `getReturnFlights` | Google Flights via SerpAPI. Requiere env `SERPAPI_KEY` (en `~/.cos-agent/.env`) |
 | `combustible` | `getFuelStatus` | Disponibilidad gasolina 27 estaciones Santa Cruz + dist Google Maps + links por estación. Requiere env `GOOGLE_MAPS_API_KEY` (fallback: `~/.combustible-mcp.env`). Worker: `combustible-proxy.carlos-cb4.workers.dev/api/stations`. Wired en Vesta (usa `FAMILY_GOOGLE_MAPS_API_KEY`) y Jano. |
 | `panini-mundial` | `paniniProgress`, `paniniSection`, `paniniMissing`, `paniniDuplicates`, `paniniRegister`, `paniniRemove`, `paniniSearch` | Álbum Panini FIFA World Cup 2026 de Cal y Noe. Backend: Notion DB `35cc487609dd80868b1dc68095a6f84f`. Requiere env `NOTION_TOKEN` (token integración Claude CoS), `PANINI_DB_ID`. Wired en Jano y Vesta. Ver docs en `servers/panini-mundial/docs/`. |
-| `inversiones-query` | `getPortfolioSummary`, `getDailyMovers`, `getPositionDetail`, `getPortfolioPerformance`, `getPriceHistory`, `getTransactionHistory`, `getPortfolioConcentration`, `searchPosition` | Portfolio de inversiones de Cal (Kubera + Yahoo Finance + Airtable). Requiere env `KUBERA_AUTH_TOKEN`, `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`. Wired en Jano y Pecunia. Gotcha: Kubera v2 API devuelve `{markdown}` (no JSON plano) — parser en `tools/portfolio.ts`. Yahoo `/v7/quote` bloqueado (401) → usa `/v8/finance/chart` en `query2`. Cash positions de Kubera tienen `ticker:"USD"` → filtrar antes de llamar Yahoo. |
+| `inversiones-query` | `getPortfolioSummary`, `getDailyMovers`, `getPositionDetail`, `getPortfolioPerformance`, `getPriceHistory`, `getTransactionHistory`, `getPortfolioConcentration`, `searchPosition` | Portfolio de inversiones de Cal (Kubera + Yahoo Finance + Airtable). Requiere env `KUBERA_AUTH_TOKEN`, `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`. Wired en Jano y Pecunia. Gotcha: Kubera v2 API devuelve `{markdown}` (no JSON plano) — parser en `tools/portfolio.ts`. Yahoo `/v7/quote` bloqueado (401) → usa `/v8/finance/chart` en `query2`. Cash positions de Kubera tienen `ticker:"USD"` → filtrar antes de llamar Yahoo. `get_portfolio_history` devuelve `{portfolioDataPoints: [{date, value}]}` (NO `{startValue, endValue}`). `get_portfolio_cagr` devuelve `{cagrOldValues: {ytd_networth: {date, oldValue}, ...}}` (NO `{cagrYTD}`). |
 
 ## Docs por servidor
 
@@ -88,6 +88,10 @@ p.stdout.once('data', d => { console.log(d.toString()); p.kill(); });
 setTimeout(() => p.kill(), 3000);
 "
 ```
+
+## Gotcha: Airtable sort params
+
+Usar formato indexado (`"sort[0][field]": "Fecha", "sort[0][direction]": "desc"`), NO JSON string (`sort: "[{field:Fecha,...}]"`). El segundo formato devuelve HTTP 422.
 
 ## Gotcha reminders-cli
 

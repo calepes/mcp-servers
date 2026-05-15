@@ -1,5 +1,15 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-15
+
+### inversiones-query — bug fixes post-launch
+
+- **Fix `getPortfolioPerformance`:** código asumía que `get_portfolio_history` devolvía `{startValue, endValue}` y `get_portfolio_cagr` devolvía `{cagrYTD}`. Ambos son incorrectos. Formatos reales: `{portfolioDataPoints: [{date, value}]}` y `{cagrOldValues: {ytd_networth: {date, oldValue}, ...}}`. Resultado: `deltaUSD` siempre 0 y `cagr` siempre null. Corregido con parsing correcto de ambos endpoints.
+- **Fix `getTransactionHistory` sort:** sort param enviado como JSON string causaba HTTP 422 en Airtable. Corregido a formato indexado (`sort[0][field]=Fecha`).
+- **Fix `getTransactionHistory` — tickers vacíos:** 4 field names incorrectos corregidos (`Activo Financiero`, `Tipo de Transaccion`, `PU - Transaccion`, `Fee  ($)`). Ticker resuelto desde field `Ticket` (lookup que devuelve `["SPY"]`), con fallback a Securities map.
+- **Fix `getDailyMovers` — impact total:** `DailyMover` ahora incluye `shares` (suma cross-broker de posiciones Kubera) y `totalChangeUSD` (impacto portafolio = `changeUSD × shares`). Antes solo había `changeUSD` por acción.
+- **Docs:** CLAUDE.md actualizado con formatos reales de Kubera history/cagr y gotcha de Airtable sort params.
+
 ## 2026-05-14
 
 ### inversiones-query — MCP nuevo + bug fixes
