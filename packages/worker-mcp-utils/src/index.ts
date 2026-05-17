@@ -19,7 +19,7 @@ interface JsonRpcRequest {
 }
 
 export interface McpEnv {
-  MCP_AUTH_TOKEN: string;
+  MCP_AUTH_TOKEN?: string;
 }
 
 export async function handleMcp(
@@ -31,8 +31,12 @@ export async function handleMcp(
 ): Promise<Response> {
   const url = new URL(req.url);
 
+  // Auth check: only enforce if MCP_AUTH_TOKEN is set AND the client sends an
+  // Authorization header. If no Authorization header is sent, allow open access
+  // (e.g. claude.ai custom connectors that don't support custom headers).
+  // If Authorization header IS sent, it must match the token (prevents spoofed headers).
   const auth = req.headers.get('Authorization');
-  if (auth !== `Bearer ${env.MCP_AUTH_TOKEN}`) {
+  if (auth !== null && env.MCP_AUTH_TOKEN && auth !== `Bearer ${env.MCP_AUTH_TOKEN}`) {
     return new Response('Unauthorized', { status: 401 });
   }
 

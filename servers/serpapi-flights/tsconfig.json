@@ -7,7 +7,12 @@
     "rootDir": "src",
     "declaration": false,
     "sourceMap": false,
-    "types": ["@cloudflare/workers-types"]
+    "types": [
+      "@cloudflare/workers-types",
+      "node"
+    ]
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }

@@ -397,6 +397,6 @@ async function dispatchTool(name: string, args: Record<string, unknown>) {
 
 export default {
   fetch(req: Request, env: Env): Promise<Response> {
-    return handleMcp(req, env, TOOLS, 'naabol-flights', (name, args) => dispatchTool(name, args));
+    return handleMcp(req, env, TOOLS, 'naabol-flights', (name, args) => dispatchTool(name, args as Record<string, unknown>));
   },
 } satisfies ExportedHandler<Env>;
