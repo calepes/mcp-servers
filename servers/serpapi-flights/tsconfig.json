@@ -6,7 +6,8 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/**/*"]
 }
