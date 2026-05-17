@@ -1,5 +1,12 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-16
+
+### Documentación
+
+- **Gotcha panini-mundial:** `paniniRegister` solo hace +1 por código — no sirve para updates absolutos desde imagen/screenshot. Para esos casos usar Notion MCP directamente (`notion-update-page` + `update_properties` + `{"Cantidad": N}`). Documentado en CLAUDE.md.
+- **Referencia MCP Servers:** añadida entrada en `Claude Projects/CLAUDE.md` apuntando al CLAUDE.md del monorepo MCP para contexto de tools, gotchas y registro en daemons.
+
 ## 2026-05-15
 
 ### inversiones-query — bug fixes post-launch
