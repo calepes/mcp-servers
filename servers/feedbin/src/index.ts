@@ -413,6 +413,54 @@ async function deleteSubscription(subscriptionId: number): Promise<{ deleted: nu
   return { deleted: subscriptionId };
 }
 
+async function getUnreadByFeed(): Promise<
+  Array<{
+    feed_id: number;
+    feed_title: string;
+    tags: string[];
+    unread_count: number;
+  }>
+> {
+  const [allIds, subs, taggings] = await Promise.all([
+    fetchUnreadIds(),
+    fetchSubscriptions(),
+    fetchTaggings(),
+  ]);
+  if (allIds.length === 0) return [];
+
+  const subMap = new Map<number, FeedbinSubscription>();
+  for (const sub of subs) subMap.set(sub.feed_id, sub);
+
+  const tagsByFeed = new Map<number, string[]>();
+  for (const t of taggings) {
+    const existing = tagsByFeed.get(t.feed_id) ?? [];
+    existing.push(t.name);
+    tagsByFeed.set(t.feed_id, existing);
+  }
+
+  // Fetch unread entries with feed_id via ?read=false (avoids long IDs URL)
+  const res = await apiFetch("/entries.json?read=false&per_page=1000");
+  if (!res.ok) throw new Error(`Feedbin entries: ${res.status}`);
+  const entries = (await res.json()) as FeedbinEntry[];
+
+  const counts: Record<number, number> = {};
+  for (const entry of entries) {
+    counts[entry.feed_id] = (counts[entry.feed_id] ?? 0) + 1;
+  }
+
+  return Object.entries(counts)
+    .map(([feed_id_str, unread_count]) => {
+      const feed_id = Number(feed_id_str);
+      return {
+        feed_id,
+        feed_title: subMap.get(feed_id)?.title ?? "Unknown",
+        tags: tagsByFeed.get(feed_id) ?? [],
+        unread_count,
+      };
+    })
+    .sort((a, b) => b.unread_count - a.unread_count);
+}
+
 async function addSubscription(feedUrl: string): Promise<{
   feed_id: number;
   title: string;
@@ -556,6 +604,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["url"],
         additionalProperties: false,
       },
+    },
+    {
+      name: "getUnreadByFeed",
+      description:
+        "Conteo de artículos no leídos agrupado por feed, con título del feed y sus carpetas/tags. Devuelve [{ feed_id, feed_title, tags, unread_count }] ordenado de mayor a menor. Usar para responder 'cuántos no leídos por feed' o 'dame mis feeds por carpeta con conteo'.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      annotations: READ_ONLY.annotations,
     },
     {
       name: "addSubscription",

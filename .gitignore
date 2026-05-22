@@ -2,3 +2,13 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+
+# --- security-audit-2026-05-17 ---
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+*.pem
+secrets
+.credentials*
