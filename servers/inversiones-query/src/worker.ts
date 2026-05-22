@@ -195,7 +195,7 @@ async function dispatchTool(name: string, args: unknown, env: Record<string, unk
       const period = String(a['period']) as Period;
       const validPeriods: Period[] = ['1D', '1W', '1M', 'QTD', 'YTD', '1Y'];
       if (!validPeriods.includes(period)) throw new Error(`Invalid period: ${period}. Must be one of ${validPeriods.join(', ')}`);
-      return getPortfolioPerformance(kubera, cache, period);
+      return getPortfolioPerformance(kubera, yahoo, cache, period);
     }
 
     case 'kuberaCashFlow': {

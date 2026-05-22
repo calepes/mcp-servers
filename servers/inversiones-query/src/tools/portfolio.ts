@@ -7,7 +7,10 @@ import type {
   Period,
 } from "../types.js";
 import { KuberaClient } from "../clients/kubera.js";
+import type { YahooClient } from "../clients/yahoo.js";
 import type { Cache } from "../cache.js";
+
+const CURRENCY_CODES = new Set(["USD", "EUR", "GBP", "ARS", "PEN", "BOB", "BRL", "CLP", "COP", "MXN"]);
 
 const PORTFOLIO_ID = process.env["KUBERA_INVESTMENTS_ID"] ?? "6bccf4ba-e50d-442b-9f52-5cb3bc64523d";
 const CACHE_TTL = 120;
@@ -84,12 +87,53 @@ export async function getPortfolioConcentration(
 
 export async function getPortfolioPerformance(
   kubera: KuberaClient,
+  yahoo: YahooClient,
   cache: Cache,
   period: Period
 ): Promise<PortfolioPerformance> {
   const cacheKey = `portfolio:performance:${period}`;
   const cached = cache.get<PortfolioPerformance>(cacheKey);
   if (cached) return cached;
+
+  // 1D uses Yahoo Finance (regularMarketChange vs prev close) — Kubera history lacks daily granularity.
+  if (period === "1D") {
+    const portfolio = await fetchKuberaPortfolio(kubera);
+    const tickers = [
+      ...new Set(
+        portfolio.positions
+          .map((p) => p.ticker)
+          .filter((t): t is string => t !== null && t !== "" && !CURRENCY_CODES.has(t))
+      ),
+    ];
+    const quotes = await yahoo.getBulkQuotes(tickers);
+
+    const sharesByTicker = new Map<string, number>();
+    for (const p of portfolio.positions) {
+      if (p.ticker && !CURRENCY_CODES.has(p.ticker)) {
+        sharesByTicker.set(p.ticker, (sharesByTicker.get(p.ticker) ?? 0) + p.quantity);
+      }
+    }
+
+    const deltaUSD = quotes.reduce((sum, q) => {
+      const shares = sharesByTicker.get(q.symbol) ?? 0;
+      return sum + q.regularMarketChange * shares;
+    }, 0);
+
+    const endValue = portfolio.totalValue;
+    const startValue = endValue - deltaUSD;
+    const deltaPct = startValue ? (deltaUSD / startValue) * 100 : 0;
+
+    const result: PortfolioPerformance = {
+      period,
+      startValue: Number(startValue.toFixed(2)),
+      endValue: Number(endValue.toFixed(2)),
+      deltaUSD: Number(deltaUSD.toFixed(2)),
+      deltaPct: Number(deltaPct.toFixed(2)),
+      cagr: null,
+    };
+    cache.set(cacheKey, result, CACHE_TTL);
+    return result;
+  }
 
   const [histResult, cagrResult] = await Promise.all([
     kubera.callTool("get_portfolio_history", { portfolioId: PORTFOLIO_ID, period: "YTD" }),
@@ -120,8 +164,8 @@ export async function getPortfolioPerformance(
   } else if (period === "1Y") {
     startValue = oldVals["yearly_networth"]?.oldValue ?? 0;
   } else {
-    // 1D, 1W, 1M: find the last point at or before the cutoff date
-    const daysBack = period === "1D" ? 1 : period === "1W" ? 7 : 30;
+    // 1W, 1M: find the last point at or before the cutoff date
+    const daysBack = period === "1W" ? 7 : 30;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysBack);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
@@ -131,7 +175,7 @@ export async function getPortfolioPerformance(
 
   const delta = endValue - startValue;
   const deltaPct = startValue ? (delta / startValue) * 100 : 0;
-  const shortPeriods: Period[] = ["1D", "1W"];
+  const shortPeriods: Period[] = ["1W"];
 
   // Compute annualized return for longer periods
   let cagr: number | null = null;

@@ -1,5 +1,12 @@
 # CHANGELOG — MCP Servers
 
+## 2026-05-21
+
+### inversiones-query — fix getPortfolioPerformance 1D
+
+- **Fix `getPortfolioPerformance 1D`:** Kubera history (`get_portfolio_history`) solo tiene snapshots semanales/mensuales — para `1D` devolvía `deltaUSD: 0` porque nunca encontraba un data point de "ayer". Reemplazado con cálculo vía Yahoo Finance: `shares × regularMarketChange` por ticker, igual que `getDailyMovers`. Resultado: neto diario real del portafolio.
+- **Dos entry points:** al cambiar la firma de `getPortfolioPerformance` se descubrió que el server tiene dos callers — `index.ts` (MCP stdio) y `worker.ts` (CF Worker). Documentado en CLAUDE.md.
+
 ## 2026-05-16
 
 ### Documentación

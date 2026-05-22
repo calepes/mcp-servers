@@ -198,7 +198,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const period = String(args["period"]) as Period;
         const validPeriods: Period[] = ["1D", "1W", "1M", "QTD", "YTD", "1Y"];
         if (!validPeriods.includes(period)) throw new Error(`Invalid period: ${period}. Must be one of ${validPeriods.join(", ")}`)
-        const result = await getPortfolioPerformance(kubera, cache, period);
+        const result = await getPortfolioPerformance(kubera, yahoo, cache, period);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
       case "getPriceHistory": {
