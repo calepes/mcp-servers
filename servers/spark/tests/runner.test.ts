@@ -10,7 +10,7 @@ describe("runSpark", () => {
   });
 
   it("returns non-zero exitCode + stderr on failure", async () => {
-    const result = await runSpark([], { binaryPath: "/bin/false" });
+    const result = await runSpark([], { binaryPath: "/usr/bin/false" });
     expect(result.exitCode).not.toBe(0);
   });
 

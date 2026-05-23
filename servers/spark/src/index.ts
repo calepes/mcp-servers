@@ -23,9 +23,11 @@ export function runSpark(args: string[], opts: RunOpts = {}): Promise<RunResult>
   return new Promise((resolve) => {
     execFile(binary, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        const exitCode = typeof (err as NodeJS.ErrnoException & { code?: unknown }).code === "number"
-          ? ((err as NodeJS.ErrnoException & { code: number }).code)
-          : 1;
+        const e = err as NodeJS.ErrnoException & { code?: unknown; exitCode?: unknown };
+        const exitCode =
+          typeof e.exitCode === "number" ? e.exitCode :
+          typeof e.code === "number" ? e.code :
+          1;
         resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? err.message), exitCode });
         return;
       }
