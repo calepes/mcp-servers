@@ -218,13 +218,85 @@ const READ_TOOLS = [
   },
 ];
 
+const WRITE_TOOLS = [
+  {
+    name: "createDraft",
+    description:
+      "Crear o editar un draft de email. Body en markdown (convertido a HTML). Requires triage access. Usar replyTo/forward para responder/reenviar; edit para modificar draft existente.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "array", items: { type: "string" } },
+        cc: { type: "array", items: { type: "string" } },
+        bcc: { type: "array", items: { type: "string" } },
+        subject: { type: "string" },
+        body: { type: "string", description: "Markdown body" },
+        account: { type: "string", description: "Email de la cuenta from" },
+        replyTo: { type: "string", description: "Message ID al que responder" },
+        forward: { type: "string", description: "Message ID a forward" },
+        edit: { type: "string", description: "Draft ID a editar" },
+        attach: { type: "array", items: { type: "string" }, description: "Absolute paths de archivos" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "postComment",
+    description:
+      "Post team comment (chat) en un thread. Si el thread no está shared, se comparte automático. Requires triage access. Args: { threadId, body, team?, users?, attach?, edit? }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        threadId: { type: "string" },
+        body: { type: "string" },
+        team: { type: "string" },
+        users: { type: "array", items: { type: "string" } },
+        attach: { type: "array", items: { type: "string" } },
+        edit: { type: "string", description: "Comment ID a editar" },
+      },
+      required: ["threadId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "emailAction",
+    description:
+      "Ejecuta acción sobre un email: archive, pin, snooze, assign, attachLabel, detachLabel, markRead, markUnread, etc. Requires triage access. Args extra dependen de la acción (e.g., snooze necesita until; assign necesita user).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "archive | pin | snooze | assign | attachLabel | detachLabel | markRead | markUnread | etc." },
+        messageId: { type: "string" },
+        extraArgs: { type: "array", items: { type: "string" }, description: "Args adicionales según action (ver `spark skill`)" },
+      },
+      required: ["action", "messageId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "contactAction",
+    description:
+      "Acción sobre un contacto: blockContact, acceptContact, categorize, etc. Requires triage access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "blockContact | acceptContact | categorize | etc." },
+        email: { type: "string" },
+        extraArgs: { type: "array", items: { type: "string" } },
+      },
+      required: ["action", "email"],
+      additionalProperties: false,
+    },
+  },
+];
+
 const server = new Server(
   { name: "spark", version: "0.1.0" },
   { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: READ_TOOLS,
+  tools: [...READ_TOOLS, ...WRITE_TOOLS],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -293,6 +365,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "readMeeting") {
       return toMcpResponse(await runSpark(["meeting", String(a.id)]));
+    }
+
+    // Write tools (require triage access — natural error from CLI otherwise)
+    if (name === "createDraft") {
+      const cli = [
+        "draft",
+        ...repeatFlag("--to", a.to),
+        ...repeatFlag("--cc", a.cc),
+        ...repeatFlag("--bcc", a.bcc),
+        ...optFlag("--subject", a.subject),
+        ...optFlag("--body", a.body),
+        ...optFlag("--account", a.account),
+        ...optFlag("--reply-to", a.replyTo),
+        ...optFlag("--forward", a.forward),
+        ...optFlag("--edit", a.edit),
+        ...repeatFlag("--attach", a.attach),
+      ];
+      return toMcpResponse(await runSpark(cli));
+    }
+    if (name === "postComment") {
+      const cli = ["comment", String(a.threadId)];
+      cli.push(
+        ...optFlag("--body", a.body),
+        ...optFlag("--team", a.team),
+        ...repeatFlag("--user", a.users),
+        ...repeatFlag("--attach", a.attach),
+        ...optFlag("--edit", a.edit),
+      );
+      return toMcpResponse(await runSpark(cli));
+    }
+    if (name === "emailAction") {
+      const extra = Array.isArray(a.extraArgs) ? a.extraArgs.map(String) : [];
+      const cli = ["action", String(a.action), String(a.messageId), ...extra];
+      return toMcpResponse(await runSpark(cli));
+    }
+    if (name === "contactAction") {
+      const extra = Array.isArray(a.extraArgs) ? a.extraArgs.map(String) : [];
+      const cli = ["contact-action", String(a.action), String(a.email), ...extra];
+      return toMcpResponse(await runSpark(cli));
     }
 
     return { isError: true, content: [{ type: "text" as const, text: `Unknown tool: ${name}` }] };
