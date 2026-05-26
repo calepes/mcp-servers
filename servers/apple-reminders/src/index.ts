@@ -110,7 +110,16 @@ async function addItem(
   notes?: string,
   dueIso?: string,
   priority?: number,
-): Promise<void> {
+): Promise<{ created: true } | { duplicate: true; externalId: string; dueDate?: string }> {
+  // Dedup check: no crear si ya existe un reminder activo con el mismo título (case-insensitive)
+  const existing = (await listItems(list)) as Array<{ externalId: string; title: string; isCompleted: boolean; dueDate?: string }>;
+  const match = existing.find(
+    (r) => !r.isCompleted && r.title.toLowerCase() === title.toLowerCase(),
+  );
+  if (match) {
+    return { duplicate: true, externalId: match.externalId, dueDate: match.dueDate };
+  }
+
   const args = ["add", list, title];
   if (notes?.trim()) args.push("--notes", notes);
   if (dueIso) {
@@ -126,6 +135,7 @@ async function addItem(
   }
   if (priority !== undefined) args.push("--priority", String(priority));
   await execReminders(args);
+  return { created: true };
 }
 
 function isoToCliDate(isoStr: string): string | null {
@@ -297,8 +307,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { list, title, notes, dueIso, priority } = args as {
         list: string; title: string; notes?: string; dueIso?: string; priority?: number;
       };
-      await addItem(list, title, notes, dueIso, priority);
-      data = { ok: true, list, title };
+      const result = await addItem(list, title, notes, dueIso, priority);
+      if ("duplicate" in result) {
+        data = {
+          ok: false,
+          duplicate: true,
+          list,
+          title,
+          externalId: result.externalId,
+          dueDate: result.dueDate,
+          message: `Ya existe un reminder activo con ese título en "${list}" (id=${result.externalId}${result.dueDate ? `, vence=${result.dueDate}` : ""}). No se creó duplicado.`,
+        };
+      } else {
+        data = { ok: true, list, title };
+      }
     } else if (name === "completeReminder") {
       const { list, externalId } = args as { list: string; externalId: string };
       await completeItem(list, externalId);

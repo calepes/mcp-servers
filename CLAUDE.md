@@ -98,6 +98,10 @@ Usar formato indexado (`"sort[0][field]": "Fecha", "sort[0][direction]": "desc"`
 
 Versiones nuevas devuelven UUIDs en el campo `externalId` del JSON, pero los comandos `complete` y `delete` solo aceptan índice entero. En `listItems()` siempre usar `String(idx)` como `externalId`, ignorar `r.externalId`.
 
+## Gotcha: `addReminder` dedup (2026-05-26)
+
+`addReminder` verifica duplicados antes de crear: si ya existe un reminder activo con el mismo título (case-insensitive) en la lista, retorna `{ ok: false, duplicate: true, externalId, dueDate?, message }` sin crear nada. El LLM debe leer `ok` para saber si el reminder realmente se creó. Causa del cambio: Jano creaba duplicados cuando el usuario ya tenía un reminder con el mismo nombre.
+
 ## Gotcha: `keith/reminders-cli 2.5.1` `edit` limitado (2026-05-04)
 
 El CLI `reminders` (Swift signed, instalado via `brew install keith/formulae/reminders-cli`) solo soporta `--notes` y title positional en `edit`. **NO soporta `--priority` ni `--due-date`**: si se pasan, los ignora silenciosamente (exit 0 sin actualizar). El MCP `apple-reminders` ahora throw-ea error claro en `editReminder` cuando se intenta priority/dueDate (antes fallaba silencioso). Para esos cambios: `deleteReminder + addReminder` con la nueva property.
