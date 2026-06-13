@@ -36,7 +36,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "getFixtures",
       description:
-        "Partidos del Mundial 2026 por fecha. Args: { date?: 'YYYY-MM-DD' } (default: todos). El filtro `date` y el `kickoff` YA vienen en hora local de Bolivia (America/La_Paz, UTC-4) — NO reconviertas ni restes horas; mostrá la hora del ISO tal cual. Devuelve [{id, kickoff, status (NS/1H/HT/2H/FT), round, home, away, score}]. Usar para 'qué partidos hay hoy/mañana', calendario. El `id` (fixtureId) sirve para getLineups/getMatchStats/getMatchDetail.",
+        "Partidos del Mundial 2026 por fecha. Args: { date?: 'YYYY-MM-DD' } (default: todos). El filtro `date`, el `kickoff` y `kickoffLabel` YA vienen en hora local de Bolivia (America/La_Paz, UTC-4) — NO reconviertas ni restes horas. Devuelve [{id, kickoff, kickoffLabel, status (NS/1H/HT/2H/FT), round, home, away, score}]. **`kickoffLabel` (ej. 'mar 16 jun · 21:00') trae día de la semana + fecha + hora ya calculados — usalo LITERAL. NUNCA calcules vos el día de la semana desde el `kickoff` (da errores).** Usar para 'qué partidos hay hoy/mañana', calendario. El `id` (fixtureId) sirve para getLineups/getMatchStats/getMatchDetail.",
       inputSchema: { type: "object", properties: { date: { type: "string" } }, additionalProperties: false },
       annotations: READ_ONLY,
     },

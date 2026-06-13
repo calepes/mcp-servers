@@ -43,8 +43,10 @@ async function api<T = unknown>(
 
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-  // Hora local Bolivia para todo el family /fixtures (filtro date + fechas devueltas).
-  if (path.startsWith("/fixtures") && !url.searchParams.has("timezone")) {
+  // Hora local Bolivia solo en endpoints que filtran/devuelven fechas. Los sub-endpoints
+  // por fixtureId (events/statistics/players/lineups) rechazan timezone ("field do not exist").
+  const TZ_PATHS = new Set(["/fixtures", "/fixtures/headtohead"]);
+  if (TZ_PATHS.has(path) && !url.searchParams.has("timezone")) {
     url.searchParams.set("timezone", TZ);
   }
   const ckey = url.toString();
@@ -78,6 +80,29 @@ interface RawFixture {
 
 // --- tools ----------------------------------------------------------------
 
+/**
+ * Etiqueta de fecha/hora lista para renderizar, calculada EN CÓDIGO (es-BO, La_Paz).
+ * El LLM debe usar esto literal — NO recalcular el día de la semana desde el ISO
+ * (los LLM erran la aritmética fecha→weekday). Ej: "mar 16 jun · 21:00".
+ */
+function fmtKickoff(iso: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("es-BO", {
+      timeZone: TZ,
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const g = (t: string) => (parts.find((p) => p.type === t)?.value ?? "").replace(/\./g, "");
+    return `${g("weekday")} ${g("day")} ${g("month")} · ${g("hour")}:${g("minute")}`;
+  } catch {
+    return iso;
+  }
+}
+
 /** Partidos por fecha (YYYY-MM-DD). Sin fecha: todos los del torneo. */
 export async function getFixtures(date?: string) {
   const params: Record<string, string | number> = { league: LEAGUE, season: SEASON };
@@ -90,6 +115,7 @@ export async function getFixtures(date?: string) {
     fixtures: res.response.map((f) => ({
       id: f.fixture.id,
       kickoff: f.fixture.date,
+      kickoffLabel: fmtKickoff(f.fixture.date), // día+hora ya calculados (usar literal)
       status: f.fixture.status.short, // NS=programado, 1H/HT/2H=en juego, FT=terminado
       round: f.league?.round,
       home: f.teams.home.name,
@@ -108,6 +134,7 @@ export async function getMatchDetail(fixtureId: number) {
   return {
     id: f.fixture.id,
     kickoff: f.fixture.date,
+    kickoffLabel: fmtKickoff(f.fixture.date),
     status: f.fixture.status.short,
     elapsed: f.fixture.status.elapsed,
     venue: f.fixture.venue?.name,
