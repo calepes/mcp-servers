@@ -2,6 +2,7 @@ import { handleMcp, type McpTool, type McpEnv } from 'worker-mcp-utils';
 
 interface Env extends McpEnv {
   GOOGLE_MAPS_API_KEY: string;
+  MONITOR_TOKEN?: string;
 }
 
 /* ── Types ── */
@@ -396,7 +397,67 @@ const TOOLS: McpTool[] = [
     },
     annotations: { readOnlyHint: true },
   },
+  {
+    name: 'getFuelMonitorConfig',
+    description: 'Lee la config del monitor de gasolina (estaciones, umbrales, frecuencia).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'getFuelMonitorStatus',
+    description: 'Estado en vivo por estación: enabled, litros, available, empresa. Insumo del menú.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'setFuelMonitorConfig',
+    description: 'Modifica la config del monitor (merge parcial). stations: [{name, enabled?, minLitros?}].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        checkIntervalMin: { type: 'number' },
+        reminderHours: { type: 'number' },
+        maxReminders: { type: 'number' },
+        chatId: { type: 'number' },
+        defaultMinLitros: { type: 'number' },
+        quietHours: { type: 'object' },
+        stations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              enabled: { type: 'boolean' },
+              minLitros: { type: 'number' },
+            },
+            required: ['name'],
+          },
+        },
+      },
+    },
+  },
 ];
+
+const PROXY_BASE_WORKER = 'https://combustible-proxy.carlos-cb4.workers.dev';
+
+async function getFuelMonitorConfigWorker() {
+  const r = await fetch(`${PROXY_BASE_WORKER}/monitor/config`);
+  return await r.json();
+}
+
+async function getFuelMonitorStatusWorker() {
+  const r = await fetch(`${PROXY_BASE_WORKER}/monitor/status`);
+  return await r.json();
+}
+
+async function setFuelMonitorConfigWorker(patch: Record<string, unknown>, monitorToken: string) {
+  const r = await fetch(`${PROXY_BASE_WORKER}/monitor/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Monitor-Token': monitorToken },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`config update failed: ${r.status} ${await r.text()}`);
+  return await r.json();
+}
 
 /* ── Worker export ── */
 
@@ -404,6 +465,9 @@ export default {
   fetch(req: Request, env: Env): Promise<Response> {
     return handleMcp(req, env, TOOLS, 'combustible', async (name, args) => {
       if (name === 'getFuelStatus') return getFuelStatus(args as Parameters<typeof getFuelStatus>[0], env);
+      if (name === 'getFuelMonitorConfig') return JSON.stringify(await getFuelMonitorConfigWorker());
+      if (name === 'getFuelMonitorStatus') return JSON.stringify(await getFuelMonitorStatusWorker());
+      if (name === 'setFuelMonitorConfig') return JSON.stringify(await setFuelMonitorConfigWorker(args as Record<string, unknown>, env.MONITOR_TOKEN ?? ''));
       throw new Error(`Unknown tool: ${name}`);
     });
   },

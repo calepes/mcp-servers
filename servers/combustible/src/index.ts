@@ -13,16 +13,19 @@ import { join } from "path";
 
 const PROXY_BASE = "https://combustible-proxy.carlos-cb4.workers.dev";
 
-// Leer API key de Google Maps desde ~/.combustible-mcp.env
+// Leer API key de Google Maps y MONITOR_TOKEN desde ~/.combustible-mcp.env
 let GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
-if (!GOOGLE_MAPS_API_KEY) {
+let MONITOR_TOKEN = process.env.MONITOR_TOKEN ?? "";
+if (!GOOGLE_MAPS_API_KEY || !MONITOR_TOKEN) {
   try {
     const envFile = readFileSync(join(homedir(), ".combustible-mcp.env"), "utf8");
     for (const line of envFile.split("\n")) {
       const [k, ...rest] = line.trim().split("=");
       if (k === "GOOGLE_MAPS_API_KEY" && rest.length) {
         GOOGLE_MAPS_API_KEY = rest.join("=").trim();
-        break;
+      }
+      if (k === "MONITOR_TOKEN" && rest.length) {
+        MONITOR_TOKEN = rest.join("=").trim();
       }
     }
   } catch (_) {}
@@ -208,6 +211,31 @@ async function getFuelStatus(args: {
   return `${header}\n${lines.join("\n")}${footer}`;
 }
 
+/* ── Monitor helpers ── */
+
+async function getFuelMonitorConfig() {
+  const r = await fetch(`${PROXY_BASE}/monitor/config`, { signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`config fetch failed: ${r.status} ${await r.text()}`);
+  return await r.json();
+}
+
+async function getFuelMonitorStatus() {
+  const r = await fetch(`${PROXY_BASE}/monitor/status`, { signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`status fetch failed: ${r.status} ${await r.text()}`);
+  return await r.json();
+}
+
+async function setFuelMonitorConfig(patch: Record<string, unknown>) {
+  const r = await fetch(`${PROXY_BASE}/monitor/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Monitor-Token": MONITOR_TOKEN },
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!r.ok) throw new Error(`config update failed: ${r.status} ${await r.text()}`);
+  return await r.json();
+}
+
 /* ── MCP Server ── */
 
 const server = new Server(
@@ -244,21 +272,74 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: "getFuelMonitorConfig",
+      description: "Lee la config del monitor de gasolina (estaciones, umbrales, frecuencia).",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "getFuelMonitorStatus",
+      description: "Estado en vivo por estación: enabled, litros, available, empresa. Insumo del menú.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "setFuelMonitorConfig",
+      description: "Modifica la config del monitor (merge parcial). stations: [{name, enabled?, minLitros?}].",
+      inputSchema: {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean" },
+          checkIntervalMin: { type: "number" },
+          reminderHours: { type: "number" },
+          maxReminders: { type: "number" },
+          chatId: { type: "number" },
+          defaultMinLitros: { type: "number" },
+          quietHours: { type: "object" },
+          stations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                enabled: { type: "boolean" },
+                minLitros: { type: "number" },
+              },
+              required: ["name"],
+            },
+          },
+        },
+      },
+    },
   ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  if (req.params.name !== "getFuelStatus") {
-    throw new Error(`Unknown tool: ${req.params.name}`);
+  const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+  switch (req.params.name) {
+    case "getFuelStatus": {
+      const result = await getFuelStatus(args as {
+        lat?: number;
+        lon?: number;
+        limit?: number;
+        minLitros?: number;
+      });
+      return { content: [{ type: "text", text: result }] };
+    }
+    case "getFuelMonitorConfig": {
+      const result = await getFuelMonitorConfig();
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+    case "getFuelMonitorStatus": {
+      const result = await getFuelMonitorStatus();
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+    case "setFuelMonitorConfig": {
+      const result = await setFuelMonitorConfig(args);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+    default:
+      throw new Error(`Unknown tool: ${req.params.name}`);
   }
-  const args = (req.params.arguments ?? {}) as {
-    lat?: number;
-    lon?: number;
-    limit?: number;
-    minLitros?: number;
-  };
-  const result = await getFuelStatus(args);
-  return { content: [{ type: "text", text: result }] };
 });
 
 const transport = new StdioServerTransport();
