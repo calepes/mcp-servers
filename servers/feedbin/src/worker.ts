@@ -46,12 +46,19 @@ const TOOLS: McpTool[] = [
   { name: 'savePage', description: 'Guardar una URL como página en Feedbin (read-later)', inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'URL a guardar' } }, required: ['url'] } },
   { name: 'addSubscription', description: 'Suscribirse a un feed RSS/Atom por URL', inputSchema: { type: 'object', properties: { feed_url: { type: 'string', description: 'URL del feed RSS/Atom' } }, required: ['feed_url'] } },
   { name: 'deleteSubscription', description: 'Cancelar suscripción por subscription_id (usar getSubscriptions para obtener el id)', inputSchema: { type: 'object', properties: { subscription_id: { type: 'number', description: 'ID de la suscripción (campo id de getSubscriptions, NO feed_id)' } }, required: ['subscription_id'] } },
-  { name: 'getEntriesByFeed', description: 'Entradas no leídas de un feed específico con título, URL y resumen ya incluidos. No requiere llamadas adicionales. Usar para listar/resumir artículos de un feed puntual.', inputSchema: { type: 'object', properties: { feed_id: { type: 'number', description: 'feed_id del feed' }, limit: { type: 'number', description: 'Máximo de entradas (default 50, max 1000)' } }, required: ['feed_id'] }, annotations: { readOnlyHint: true } },
+  { name: 'getEntriesByFeed', description: 'Entradas NO leídas de un feed, ORDENABLES y PAGINADAS. Args: { feed_id, limit? (default 50, max 200), order? ("newest"|"oldest", default "newest"), offset? (desplazamiento para paginar, default 0) }. Devuelve { feed_id, total_unread (total real de no leídas del feed), order, offset, returned, entries:[{id,title,url,author,summary,published}] }. Para triage de un backlog grande: usar order:"oldest" e ir subiendo offset de a `limit`, o leer total_unread para decidir un markRead masivo (juntando ids).', inputSchema: { type: 'object', properties: { feed_id: { type: 'number', description: 'feed_id del feed' }, limit: { type: 'number', description: 'Máximo de entradas (default 50, max 200)' }, order: { type: 'string', enum: ['newest', 'oldest'], description: 'Orden por fecha de publicación (default newest)' }, offset: { type: 'number', description: 'Desplazamiento para paginar (default 0)' } }, required: ['feed_id'] }, annotations: { readOnlyHint: true } },
   { name: 'getEntriesByTag', description: 'Entradas no leídas de todos los feeds de una carpeta/tag con título, URL y resumen ya incluidos. Usar para listar/resumir artículos de una carpeta entera en una sola llamada.', inputSchema: { type: 'object', properties: { tag: { type: 'string', description: 'Nombre de la carpeta/tag (ej: "1. Siempre", "4. Opcional")' }, limit: { type: 'number', description: 'Máximo de entradas por feed (default 50)' } }, required: ['tag'] }, annotations: { readOnlyHint: true } },
   { name: 'markFeedRead', description: 'Marcar TODAS las entradas no leídas de un feed específico como leídas. Usar cuando el usuario pide marcar leídas un feed por nombre o ID. Una sola llamada — no requiere obtener IDs antes.', inputSchema: { type: 'object', properties: { feed_id: { type: 'number', description: 'feed_id del feed (de getUnreadByFeed o getSubscriptions)' } }, required: ['feed_id'] } },
   { name: 'markTagRead', description: 'Marcar TODAS las entradas no leídas de una carpeta/tag como leídas. Usar cuando el usuario pide marcar leída una carpeta entera (ej: "marca los opcionales como leídos"). Una sola llamada — no requiere obtener IDs antes.', inputSchema: { type: 'object', properties: { tag: { type: 'string', description: 'Nombre de la carpeta/tag (ej: "4. Opcional", "1. Siempre")' } }, required: ['tag'] } },
   { name: 'getReadEntriesByFeed', description: 'Entradas ya leídas de un feed específico con título, URL y resumen. Usar para recuperar artículos previamente leídos de un feed. Soporta paginación con el parámetro page.', inputSchema: { type: 'object', properties: { feed_id: { type: 'number', description: 'feed_id del feed' }, limit: { type: 'number', description: 'Máximo de entradas (default 50, max 1000)' }, page: { type: 'number', description: 'Página de resultados (default 1)' } }, required: ['feed_id'] }, annotations: { readOnlyHint: true } },
   { name: 'getReadEntriesByTag', description: 'Entradas ya leídas de todos los feeds de una carpeta/tag con título, URL y resumen. Usar para recuperar artículos previamente leídos de una carpeta entera en una sola llamada.', inputSchema: { type: 'object', properties: { tag: { type: 'string', description: 'Nombre de la carpeta/tag (ej: "1. Siempre", "4. Opcional")' }, limit: { type: 'number', description: 'Máximo de entradas por feed (default 50)' }, page: { type: 'number', description: 'Página de resultados por feed (default 1)' } }, required: ['tag'] }, annotations: { readOnlyHint: true } },
+  { name: 'getStarredEntries', description: 'Artículos marcados con estrella (starred / favoritos) en Feedbin, con título, URL, autor y resumen, ordenados del más reciente. Args: { limit? (default 50) }. Devuelve { total, entries: [{ id, feed_id, title, url, author, summary, published }] }.', inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'Máximo de entradas (default 50)' } }, required: [] }, annotations: { readOnlyHint: true } },
+  { name: 'starEntries', description: 'Marca una o varias entradas con estrella (starred) en Feedbin. Args: { ids: number[] }. Devuelve { ok, starred }.', inputSchema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'number' } } }, required: ['ids'] } },
+  { name: 'unstarEntries', description: 'Quita la estrella (unstar) de una o varias entradas en Feedbin. Args: { ids: number[] }. Devuelve { ok, unstarred }.', inputSchema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'number' } } }, required: ['ids'] } },
+  { name: 'createTagging', description: 'Asigna un feed a una carpeta/tag (lo agrega; un feed puede estar en varias). Args: { feed_id, name (nombre de la carpeta/tag) }. Si la carpeta no existe, Feedbin la crea. Devuelve el tagging creado { id, feed_id, name }.', inputSchema: { type: 'object', properties: { feed_id: { type: 'number', description: 'feed_id del feed' }, name: { type: 'string', description: 'Nombre de la carpeta/tag' } }, required: ['feed_id', 'name'] } },
+  { name: 'deleteTagging', description: 'Quita un feed de una carpeta/tag (borra la asignación, NO el feed). Args: { tagging_id (campo id de getTaggings, NO feed_id) }. Para mover un feed: deleteTagging del viejo + createTagging del nuevo.', inputSchema: { type: 'object', properties: { tagging_id: { type: 'number', description: 'id del tagging (de getTaggings)' } }, required: ['tagging_id'] } },
+  { name: 'renameTag', description: 'Renombra una carpeta/tag en TODOS los feeds que la tienen. Args: { old_name, new_name }.', inputSchema: { type: 'object', properties: { old_name: { type: 'string' }, new_name: { type: 'string' } }, required: ['old_name', 'new_name'] } },
+  { name: 'deleteTag', description: 'Borra una carpeta/tag de todos los feeds (los feeds quedan sin esa carpeta, no se borran). Args: { name }.', inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } },
 ];
 
 async function dispatchTool(name: string, args: unknown, env: Record<string, unknown>): Promise<unknown> {
@@ -102,18 +109,28 @@ async function dispatchTool(name: string, args: unknown, env: Record<string, unk
     case 'addSubscription':
       return apiFetch('/subscriptions.json', e, { method: 'POST', body: JSON.stringify({ feed_url: a.feed_url }) });
     case 'getEntriesByFeed': {
-      const limit = (a.limit as number) ?? 50;
+      const limit = Math.min((a.limit as number) ?? 50, 200);
+      const offset = Math.max((a.offset as number) ?? 0, 0);
+      const order = (a.order as string) === 'oldest' ? 'oldest' : 'newest';
       const targetFeedId = Number(a.feed_id);
-      const results: Array<{ id: number; title: string | null; url: string; author: string | null; summary: string | null; published: string }> = [];
+      // Endpoint POR-FEED (eficiente): trae solo las no leídas de ESTE feed, paginado de a 100.
+      // (El método viejo paginaba TODO el unread global newest-first y cortaba antes de llegar a
+      //  los viejos del feed → no se podían pedir los más antiguos.)
+      const all: Array<{ id: number; title: string | null; url: string; author: string | null; summary: string | null; published: string }> = [];
       let page = 1;
-      while (results.length < limit) {
-        const entries = await apiFetch(`/entries.json?read=false&per_page=1000&page=${page}`, e) as Array<{ id: number; feed_id: number; title: string | null; url: string; author: string | null; summary: string | null; published: string }>;
-        if (entries.length === 0) break;
-        results.push(...entries.filter(en => en.feed_id === targetFeedId).map(en => ({ id: en.id, title: en.title, url: en.url, author: en.author, summary: en.summary, published: en.published })));
-        if (entries.length < 1000) break;
+      while (true) {
+        const entries = await apiFetch(`/feeds/${targetFeedId}/entries.json?read=false&per_page=100&page=${page}`, e) as Array<{ id: number; title: string | null; url: string; author: string | null; summary: string | null; published: string }>;
+        if (!Array.isArray(entries) || entries.length === 0) break;
+        all.push(...entries.map(en => ({ id: en.id, title: en.title, url: en.url, author: en.author, summary: en.summary, published: en.published })));
+        if (entries.length < 100) break;
         page++;
+        if (page > 50) break; // tope de seguridad (≤5000 entradas)
       }
-      return results.slice(0, limit).sort((a, b) => new Date(b.published).getTime() - new Date(a.published).getTime());
+      all.sort((x, y) => order === 'oldest'
+        ? new Date(x.published).getTime() - new Date(y.published).getTime()
+        : new Date(y.published).getTime() - new Date(x.published).getTime());
+      const slice = all.slice(offset, offset + limit);
+      return { feed_id: targetFeedId, total_unread: all.length, order, offset, returned: slice.length, entries: slice };
     }
     case 'getEntriesByTag': {
       const limit = (a.limit as number) ?? 50;
@@ -185,6 +202,47 @@ async function dispatchTool(name: string, args: unknown, env: Record<string, unk
       }
       return results.sort((a, b) => new Date(b.published).getTime() - new Date(a.published).getTime());
     }
+    case 'getStarredEntries': {
+      const limit = (a.limit as number) ?? 50;
+      const ids = await apiFetch('/starred_entries.json', e) as number[];
+      if (ids.length === 0) return { total: 0, entries: [] };
+      // /starred_entries.json devuelve solo IDs (sin orden de fecha garantizado) → traer las
+      // entradas en lotes de 100 (límite de Feedbin) y ordenar por publicación descendente.
+      const entries: Array<{ id: number; feed_id: number; title: string | null; url: string; author: string | null; summary: string | null; published: string }> = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        const part = await apiFetch(`/entries.json?ids=${chunk.join(',')}&per_page=100`, e) as typeof entries;
+        entries.push(...part);
+      }
+      entries.sort((x, y) => new Date(y.published).getTime() - new Date(x.published).getTime());
+      return {
+        total: ids.length,
+        entries: entries.slice(0, limit).map(en => ({ id: en.id, feed_id: en.feed_id, title: en.title, url: en.url, author: en.author, summary: en.summary, published: en.published })),
+      };
+    }
+    case 'starEntries':
+      await apiFetch('/starred_entries.json', e, { method: 'POST', body: JSON.stringify({ starred_entries: a.ids }) });
+      return { ok: true, starred: (a.ids as number[]).length };
+    case 'unstarEntries':
+      await apiDelete('/starred_entries.json', e, { starred_entries: a.ids });
+      return { ok: true, unstarred: (a.ids as number[]).length };
+    case 'createTagging':
+      return apiFetch('/taggings.json', e, { method: 'POST', body: JSON.stringify({ feed_id: a.feed_id, name: a.name }) });
+    case 'deleteTagging': {
+      const auth = btoa(`${e.FEEDBIN_USERNAME}:${e.FEEDBIN_PASSWORD}`);
+      const res = await fetch(`${BASE}/taggings/${a.tagging_id}.json`, {
+        method: 'DELETE',
+        headers: { Authorization: `Basic ${auth}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok && res.status !== 204) throw new Error(`Feedbin DELETE tagging ${res.status}`);
+      return { ok: true, deleted: a.tagging_id };
+    }
+    case 'renameTag':
+      return apiFetch('/tags.json', e, { method: 'POST', body: JSON.stringify({ old_name: a.old_name, new_name: a.new_name }) });
+    case 'deleteTag':
+      await apiDelete('/tags.json', e, { name: a.name });
+      return { ok: true, name: a.name };
     case 'deleteSubscription': {
       const auth = btoa(`${e.FEEDBIN_USERNAME}:${e.FEEDBIN_PASSWORD}`);
       const res = await fetch(`${BASE}/subscriptions/${a.subscription_id}.json`, {

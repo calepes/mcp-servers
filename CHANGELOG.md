@@ -1,5 +1,14 @@
 # CHANGELOG — MCP Servers
 
+## 2026-06-20
+
+### feedbin — starred, carpetas/tags y getEntriesByFeed paginado (18 → 25 tools)
+- **Starred (3 tools):** `getStarredEntries`, `starEntries`, `unstarEntries` (`/v2/starred_entries.json` GET/POST/DELETE). Habilitó el auto-resumidor de starred en Jano.
+- **Carpetas/tags (4 tools):** `createTagging`/`deleteTagging` (`/v2/taggings.json`) + `renameTag`/`deleteTag` (`/v2/tags.json`). Para organizar feeds desde Telegram. `getTaggings.id` = tagging_id (≠ feed_id) para deleteTagging.
+- **`getEntriesByFeed` reescrito:** usa el endpoint por-feed (`/feeds/{id}/entries.json`) en vez de paginar todo el unread global y filtrar (que cortaba antes de llegar a los viejos del feed). Ahora soporta `order` (newest/oldest) + `offset` + devuelve `total_unread`. Resultado acotado (limit max 200) → no dispara el persisted-output. Resuelve el triage de backlogs grandes (ej. MacRumors 427 no leídas).
+- **Path vivo = worker CF** (`mcp-feedbin.carlos-cb4.workers.dev`); `src/index.ts` (stdio) está desfasado. Tools nuevas solo en `worker.ts` + `worker:deploy`.
+- **Mercury extract NO implementado:** requiere Extract secret + firma HMAC contra `extract.feedbin.com` (`/v2/entries/{id}/extract.json` da 404). El resumidor de Jano usa `safari-fetch` como full-content para starred truncados (mejor: atraviesa paywalls).
+
 ## 2026-05-21
 
 ### inversiones-query — fix getPortfolioPerformance 1D

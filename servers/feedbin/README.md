@@ -73,13 +73,17 @@ Contenido completo de una entrada por ID (HTML completo).
 ---
 
 #### `getEntriesByFeed`
-Entradas no leídas de un feed específico con título, URL y resumen incluidos. No requiere llamadas adicionales a `getEntryContent`.
+Entradas **no leídas** de un feed, ORDENABLES y PAGINADAS. Usa el endpoint por-feed (`/feeds/{id}/entries.json`) — eficiente y permite alcanzar las más antiguas (el método viejo paginaba todo el unread global y nunca llegaba a los viejos del feed).
 
 **Params:**
 - `feed_id` (number, requerido): ID del feed (de `getUnreadByFeed` o `getSubscriptions`)
-- `limit` (number, opcional): máximo de entradas (default 50, max 1000)
+- `limit` (number, opcional): máximo de entradas (default 50, max 200)
+- `order` (string, opcional): `"newest"` (default) o `"oldest"`
+- `offset` (number, opcional): desplazamiento para paginar (default 0)
 
-**Returns:** `[{ id, title, url, author, summary, published }, ...]` ordenado por fecha descendente.
+**Returns:** `{ feed_id, total_unread, order, offset, returned, entries: [{ id, title, url, author, summary, published }] }`
+
+> Para triage de backlog grande: `order:"oldest"` e ir subiendo `offset` de a `limit`; o leer `total_unread` para decidir un markRead masivo.
 
 ---
 
@@ -172,6 +176,82 @@ Entradas ya leídas de todos los feeds de una carpeta/tag con título, URL y res
 
 ---
 
+### Starred (favoritos)
+
+#### `getStarredEntries`
+Artículos marcados con estrella, con metadata, ordenados del más reciente.
+
+**Params:**
+- `limit` (number, opcional): máximo de entradas (default 50)
+
+**Returns:** `{ total, entries: [{ id, feed_id, title, url, author, summary, published }] }`
+
+---
+
+#### `starEntries`
+Marca una o varias entradas con estrella.
+
+**Params:**
+- `ids` (array de number, requerido)
+
+**Returns:** `{ ok: true, starred: N }`
+
+---
+
+#### `unstarEntries`
+Quita la estrella de una o varias entradas.
+
+**Params:**
+- `ids` (array de number, requerido)
+
+**Returns:** `{ ok: true, unstarred: N }`
+
+---
+
+### Gestión de carpetas/tags
+
+> Un feed puede estar en varias carpetas. `getTaggings` lista las asignaciones (`id` = tagging_id, distinto de feed_id).
+
+#### `createTagging`
+Asigna un feed a una carpeta/tag (la crea si no existe).
+
+**Params:**
+- `feed_id` (number, requerido)
+- `name` (string, requerido): nombre de la carpeta/tag
+
+**Returns:** el tagging creado `{ id, feed_id, name }`
+
+---
+
+#### `deleteTagging`
+Saca un feed de una carpeta (borra la asignación, no el feed). Para MOVER un feed: `deleteTagging` del viejo + `createTagging` del nuevo.
+
+**Params:**
+- `tagging_id` (number, requerido): el campo `id` de `getTaggings` — **NO** el `feed_id`
+
+**Returns:** `{ ok: true, deleted: <id> }`
+
+---
+
+#### `renameTag`
+Renombra una carpeta/tag en todos los feeds que la tienen.
+
+**Params:**
+- `old_name` (string, requerido)
+- `new_name` (string, requerido)
+
+---
+
+#### `deleteTag`
+Borra una carpeta/tag de todos los feeds (los feeds no se borran, quedan sin esa carpeta).
+
+**Params:**
+- `name` (string, requerido)
+
+**Returns:** `{ ok: true, name }`
+
+---
+
 ### Gestión de suscripciones
 
 #### `savePage`
@@ -200,10 +280,15 @@ Cancela una suscripción por `subscription_id`.
 
 ---
 
+## No implementado
+
+- **Mercury full-content extract** — requiere el Extract secret de la cuenta + firma HMAC contra `extract.feedbin.com` (no es un endpoint con basic-auth; `/v2/entries/{id}/extract.json` da 404). El resumidor de Jano usa `safari-fetch` como full-content para starred truncados (mejor: atraviesa paywalls).
+- Saved Searches · OPML import/export · Recently read / Updated entries · feed metadata/icons · rename subscription (PATCH).
+
 ## Bot Availability
 
 | Bot | Tools |
 |-----|-------|
-| Jano | Todas (18 tools) |
+| Jano | Todas (25 tools) |
 | Vesta | — |
 | Pecunia | — |
