@@ -160,10 +160,11 @@ async function tryGetCaptions(
 ): Promise<{ text: string; lang: string } | null> {
   const subPrefix = path.join(tmpDir, "captions");
   // Priorizamos: idioma exacto, variantes (es-419, en-US), auto-translate, cualquiera
-  const langPriority = [lang, `${lang}-orig`, `${lang}.*`, `${lang}-*`, "en", "en.*", "*"].join(",");
+  const langPriority = [lang, `${lang}-orig`, `${lang}-.*`, "en", "en-.*"].join(",");
   const res = await runCmd(
     YT_DLP,
     [
+      "--impersonate", "Safari-18.0",
       "--skip-download",
       "--write-subs",
       "--write-auto-subs",
@@ -254,6 +255,7 @@ async function transcribeYoutube(args: TranscribeArgs): Promise<TranscribeResult
     const dlpRes = await runCmd(
       YT_DLP,
       [
+        "--impersonate", "Safari-18.0",
         "-x",
         "--audio-format",
         "wav",
