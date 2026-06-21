@@ -37,6 +37,32 @@ Envía una notificación con formato estándar: `{emoji} {title}\n\n{message}`.
 
 ---
 
+### Media: `sendPhoto` · `sendDocument` · `sendVideo` · `sendAudio` · `sendVoice`
+
+Envían un archivo a Telegram. Comparten interfaz.
+
+**Fuente** (en el campo homónimo — `photo`/`document`/`video`/`audio`/`voice`), una de:
+- **URL** `https://…`
+- **Ruta local** (`/abs` o `~/…`) — solo en el entry point stdio (Node, con filesystem); se sube por multipart
+- **file_id** de Telegram (reenviar algo ya subido)
+- o bien **`base64` + `filename`** para subir contenido inline (única vía con media en el Worker, que no tiene filesystem)
+
+**Params opcionales:** `caption`, `parseMode` (`'HTML'`/`'MarkdownV2'`), `chatId`. Solo `sendAudio`: `title`, `performer`.
+
+**Returns:** `{ ok: true }`
+
+---
+
+### `sendLocation`
+
+Envía una ubicación.
+
+**Params:** `latitude` (number, req), `longitude` (number, req), `chatId` (opcional).
+
+**Returns:** `{ ok: true }`
+
+---
+
 ## Bot Availability
 
 Este MCP es exclusivo para notificaciones del sistema Claude Code y no está en el allowlist de ningún bot de agente.
