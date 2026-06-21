@@ -62,3 +62,22 @@ Estado de un vuelo específico por código. Si no se especifica aeropuerto, busc
 | Jano | `getAirportFlights`, `getFlight` |
 | Vesta | `getAirportFlights`, `getFlight` |
 | Pecunia | `getAirportFlights`, `getFlight` |
+
+## Gotcha: consumir vía worker CF, NO el stdio local (Diag 2026-06-21)
+
+El stdio local (`src/index.ts` → `dist/index.js`) es un wrapper sobre el CLI
+`Aeropuertos Bolivia/cli/consultar-vuelo.mjs`, que hace `fetch` (undici) a
+`https://fids.naabol.gob.bo`. **Desde la red local de Cal ese fetch se cuelga
+~8s y aborta** (`AbortController` a `FETCH_TIMEOUT_MS=8000`) → la tool devuelve
+`total:0, errors:[{"error":"This operation was aborted"}]`. `curl` al MISMO host
+responde en ~0.2s — es específico de undici↔ese host en esa máquina (no IPv6: el
+host es solo IPv4; no User-Agent: el worker tampoco manda uno). El **worker CF**
+(`mcp-naabol-flights.carlos-cb4.workers.dev/mcp`) hace el mismo fetch desde el
+edge, donde sí responde rápido.
+
+**Por eso los daemons consumen este MCP vía `mcp-remote` apuntando al worker,
+NO el stdio local.** Registro en `daemon-v2/src/index.ts` de Jano y Vesta:
+`{ command: MCP_REMOTE, args: ["https://mcp-naabol-flights.carlos-cb4.workers.dev/mcp"] }`
+(mismo patrón que feedbin). Si agregás un nuevo bot, registralo igual. El worker
+expone `getFlight` + `getAirportFlights` (NO `getFlights` batch — quitado del
+prompt 2026-06-21; para varios vuelos, llamar `getFlight` N veces).

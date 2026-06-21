@@ -129,3 +129,17 @@ El CLI `reminders` (Swift signed, instalado via `brew install keith/formulae/rem
 ## Gotcha: outputs descriptivos confunden al LLM
 
 MCPs que wrapean CLIs no deben emitir campos descriptivos sobre estado parcial ("endpoint caído", "datos limitados", "fallback activo") cuando los datos siguen siendo válidos. El LLM tiende a repetir esos textos al usuario y bloquearse aunque el payload tenga lo que pidió. Caso real: `naabol-flights` con campo `nota` (fix 2026-05-04 — ahora solo aparece cuando no hay matches). Regla: outputs minimalistas, errores solo cuando hay error real (no en degradación parcial con datos útiles).
+
+## Gotcha: undici (Node fetch) se cuelga contra algunos hosts gov.bo (Diag 2026-06-21)
+
+Un MCP stdio local que hace `fetch` nativo (undici) a `https://fids.naabol.gob.bo` se **cuelga ~8s y aborta** desde la red local de Cal, aunque `curl` al mismo host responda en ~0.2s. No es IPv6 (el host es solo IPv4) ni User-Agent. Es específico de undici↔ese host en esa máquina. **Fix: mover el fetch al edge — consumir el MCP vía su worker CF (`mcp-remote`) en vez del stdio local** (ver `servers/naabol-flights/README.md`). Aplica a cualquier MCP futuro que pegue a un host `.gob.bo` lento/quisquilloso con TLS: preferir worker CF + `mcp-remote`.
+
+## Gotcha: `pdf-parse` v2 — named export + `.getText()` (Diag 2026-06-21)
+
+La API de `pdf-parse` cambió en v2. El patrón correcto para cualquier server/daemon que extraiga texto de PDFs:
+```js
+const { PDFParse } = require("pdf-parse");        // named export — NO `const PDFParse = require(...)`
+const parser = new PDFParse({ data: new Uint8Array(buf) });
+const { text } = await parser.getText();          // NO `parsed.text` directo
+```
+El bug clásico (`require` sin destructurar + `parsed.text` sin `.getText()`) da `undefined` → `TypeError` que un catch genérico enmascara como `"[PDF — error al procesar]"`. Caso real: `schedule-cal.ts` en Jano/Vesta (PDFs de viajes en Notion fallaban silenciosamente). Mismo patrón ya en `index.ts` (`processDocument`).
