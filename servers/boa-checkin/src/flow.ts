@@ -2,17 +2,28 @@ import type { Page, Frame } from "playwright";
 import type { BoaTraveler } from "./travelers.js";
 import { missingBoaFields } from "./missing-fields.js";
 
-function amadeusFrame(page: Page): Frame {
+/**
+ * `page.frame()` es sincrónico y devuelve null si el <iframe> todavía no se
+ * adjuntó al DOM — hace falta esperar explícitamente su aparición (la SPA de
+ * BoA lo agrega recién después de la navegación al widget de check-in).
+ */
+async function waitForAmadeusFrame(page: Page, timeoutMs = 15000): Promise<Frame> {
+  await page.locator('iframe[name="responseFrame"]').waitFor({ timeout: timeoutMs });
   const frame = page.frame({ name: "responseFrame" });
   if (!frame) throw new Error("No se encontró el iframe de Amadeus (responseFrame).");
   return frame;
 }
 
 async function dismissCookieBanner(page: Page): Promise<void> {
+  // El banner de cookies aparece unos segundos DESPUÉS de domcontentloaded
+  // (hidratación de la SPA) — isVisible() sin esperar da falso negativo si se
+  // chequea demasiado temprano. waitFor con estado "visible" sí espera.
   const confirmBtn = page.getByRole("button", { name: "Confirm" });
-  if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await confirmBtn.click();
-  }
+  const appeared = await confirmBtn
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) await confirmBtn.click();
 }
 
 /** Busca la reserva en boa.bo y entra al widget de Amadeus. */
@@ -29,15 +40,36 @@ export async function searchBoaReservation(
   await page.getByRole("textbox", { name: "2AOFFP" }).fill(locator);
   await page.getByRole("button", { name: /Start Check-in.*Iniciar/i }).click();
 
-  await amadeusFrame(page)
+  await (await waitForAmadeusFrame(page))
     .getByText(/Your journey|Choose how to get your boarding passes|Required information/i)
     .first()
     .waitFor({ timeout: 20000 });
 }
 
+// Badges/etiquetas que BoA antepone al nombre real en la lista de pasajeros
+// ("adult", "child", "infant") — no son el nombre, hay que saltarlas.
+const PASSENGER_BADGE_WORDS = new Set(["adult", "child", "infant"]);
+
+/**
+ * De las líneas de texto de un <li> de pasajero, la primera que NO es un
+ * badge de tipo de pasajero y que tiene pinta de nombre (2+ palabras) es el
+ * nombre real (ej. "Carlos Lepesqueur"), no la primera línea a secas.
+ */
+function extractPassengerName(rowText: string): string | null {
+  const lines = rowText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  for (const line of lines) {
+    if (PASSENGER_BADGE_WORDS.has(line.toLowerCase())) continue;
+    if (/^[A-Za-zÀ-ÿ' -]+\s[A-Za-zÀ-ÿ' -]+$/.test(line)) return line;
+  }
+  return null;
+}
+
 /** Lista los pasajeros de la reserva y si cada uno ya hizo check-in. */
 export async function listBoaPassengers(page: Page): Promise<{ nombre: string; yaCheckeado: boolean }[]> {
-  const frame = amadeusFrame(page);
+  const frame = await waitForAmadeusFrame(page);
   const rows = frame.locator('li:has(input[type="checkbox"]), li:has-text("Checked in")');
   const count = await rows.count();
   const result: { nombre: string; yaCheckeado: boolean }[] = [];
@@ -45,10 +77,10 @@ export async function listBoaPassengers(page: Page): Promise<{ nombre: string; y
     const row = rows.nth(i);
     const text = await row.innerText().catch(() => "");
     if (!text.trim()) continue;
-    const nombreMatch = text.match(/^([A-Za-zÀ-ÿ' -]+)/);
-    if (!nombreMatch) continue;
+    const nombre = extractPassengerName(text);
+    if (!nombre) continue;
     result.push({
-      nombre: nombreMatch[1].trim(),
+      nombre,
       yaCheckeado: /checked in/i.test(text),
     });
   }
@@ -82,7 +114,7 @@ async function pickAutocomplete(frame: Frame, fieldName: string | RegExp, value:
  * predice, pero esto refleja lo que el propio formulario reportó).
  */
 export async function fillRequiredInfo(page: Page, traveler: BoaTraveler): Promise<string[]> {
-  const frame = amadeusFrame(page);
+  const frame = await waitForAmadeusFrame(page);
   const missing = missingBoaFields(traveler);
   if (missing.length > 0) return missing; // no tiene sentido ni intentar sin estos datos
 
@@ -119,7 +151,7 @@ export interface BoaSeatOption {
 
 /** Confirma la info requerida y devuelve el mapa de asientos del pasajero activo. */
 export async function getSeatOptions(page: Page): Promise<BoaSeatOption> {
-  const frame = amadeusFrame(page);
+  const frame = await waitForAmadeusFrame(page);
   await frame.getByRole("button", { name: "Confirm and continue" }).click();
   await frame.getByText(/Select your seat/i).waitFor({ timeout: 15000 });
 
@@ -140,7 +172,7 @@ export async function getSeatOptions(page: Page): Promise<BoaSeatOption> {
 
 /** Elige un asiento específico (si se pasa) o confirma el preseleccionado, y sigue. */
 export async function confirmSeatAndContinue(page: Page, seatCode?: string): Promise<void> {
-  const frame = amadeusFrame(page);
+  const frame = await waitForAmadeusFrame(page);
   if (seatCode) {
     await frame.getByRole("button", { name: new RegExp(`Seat ${seatCode}\\b`) }).click();
   }
@@ -155,7 +187,7 @@ export async function confirmSeatAndContinue(page: Page, seatCode?: string): Pro
  * descarguemos ni sirvamos el archivo.
  */
 export async function getBoardingPassUrl(page: Page): Promise<string> {
-  const frame = amadeusFrame(page);
+  const frame = await waitForAmadeusFrame(page);
   await frame.getByRole("button", { name: "View boarding passes" }).click();
   const [popup] = await Promise.all([
     page.context().waitForEvent("page", { timeout: 15000 }),
