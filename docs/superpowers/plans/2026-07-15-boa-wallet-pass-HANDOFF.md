@@ -16,13 +16,13 @@ Referencias: spec `docs/superpowers/specs/2026-07-15-boa-wallet-pass-design.md`,
 
 ## Pendiente — bloqueado por insumos de Cal
 
-- **Task 1 — Certificado Apple**: Cal debe generar el Pass Type ID + `.p12` en developer.apple.com (decisión ya tomada: lo hace él mismo, no vía browser automation). Después extraer PEM cert+key con `openssl` (comandos exactos en el plan, Task 1) a `~/.claude/secrets/boa-wallet/` (chmod 600, **NO va al repo** — solo el WWDR público de Apple sí se commitea).
+- **Task 1 — Certificado Apple**: **BLOQUEADO 2026-07-16 — membresía de Apple Developer de Cal estaba vencida, la acaba de renovar.** Esperando que quede activa (puede tardar unas horas) antes de poder crear el Pass Type ID. Guía paso a paso ya entregada a Cal (crear Pass Type ID → CSR en Keychain Access → subir CSR al portal → descargar cert → exportar `.p12` con contraseña → anotar Team ID). Una vez activa la membresía: retomar desde ahí, después extraer PEM cert+key con `openssl` (comandos exactos en el plan, Task 1) a `~/.claude/secrets/boa-wallet/` (chmod 600, **NO va al repo** — solo el WWDR público de Apple sí se commitea).
 - **Task 11 — `apps.env`**: agregar `BOA_WALLET_PASS_TYPE_ID`, `BOA_WALLET_TEAM_ID`, `BOA_WALLET_SIGNER_CERT_PATH`, `BOA_WALLET_SIGNER_KEY_PATH`, `BOA_WALLET_SIGNER_KEY_PASSPHRASE`, `BOA_WALLET_WWDR_PATH` — depende de Task 1.
 - **Task 13 — Verificación E2E manual**: generar el pase de un vuelo real de Cal, abrirlo en Safari/Wallet, comparar el barcode contra el PDF oficial. Acá también es donde hay que validar (y probablemente ajustar) los regexes de `getWalletPassScrapeData` contra el DOM real de BoA — no se pudo hacer antes por falta de una reserva confirmada durante la sesión.
 
 ## Primer paso al retomar
 
-1. Preguntarle a Cal si ya tiene el Pass Type ID + `.p12`.
+1. Preguntarle a Cal si su membresía de Apple Developer ya quedó activa (la renovó el 2026-07-16, estaba vencida) y si ya tiene el Pass Type ID + `.p12` generados (guía paso a paso ya entregada, ver arriba).
 2. Si sí → ejecutar Task 1 (extracción openssl) → Task 11 (apps.env) → rebuild+restart de Jano o Vesta (con Cal presente, nunca autónomo) → Task 13 con una reserva real.
 3. Si no → nada que hacer del lado de código; el pipeline entero ya compila y pasa tests (22/22 en `boa-checkin`, 71/71 Jano, 36/36 Vesta).
 
