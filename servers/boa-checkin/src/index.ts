@@ -4,7 +4,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { homedir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { openBoaBrowserSession } from "./browser.js";
 import {
@@ -25,7 +26,12 @@ import {
   setFrequentFlyer,
   confirmSeatAndContinue,
   getBoardingPassUrl,
+  getWalletPassScrapeData,
 } from "./flow.js";
+import { decodeBoardingPassBarcode } from "./wallet-pdf417.js";
+import { loadWalletPassConfig, signAndPackagePass } from "./wallet-pass.js";
+
+const ASSETS_DIR = join(import.meta.dirname, "..", "assets");
 
 const TRAVELERS_PATH = join(homedir(), ".claude", "datos-viaje.json");
 
@@ -80,6 +86,13 @@ interface FrequentFlyerArgs {
   tramo?: string;
   pasajero?: string;
   numero: string;
+}
+
+interface WalletPassArgs {
+  locator: string;
+  apellido: string;
+  tramo?: string;
+  pasajero?: string;
 }
 
 async function prepareBoaCheckin(args: PrepareArgs) {
@@ -238,6 +251,56 @@ async function setBoaFrequentFlyer(args: FrequentFlyerArgs) {
   }
 }
 
+/**
+ * Genera un archivo .pkpass (Apple Wallet) del boarding pass de UN pasajero de
+ * un tramo de BoA YA checkeado. El código de barras es el BCBP real del PDF
+ * oficial, decodificado del PDF417 (ver wallet-pdf417.ts) — no un placeholder.
+ * Requiere config de certificado (BOA_WALLET_* en apps.env, ver wallet-pass.ts)
+ * y los assets de imagen en `assets/` (icon/logo, aún pendientes de aprobar).
+ */
+async function generateBoaWalletPass(args: WalletPassArgs) {
+  const config = loadWalletPassConfig(); // tira error explícito y ANTES de tocar el browser si falta config
+
+  const session = await openBoaBrowserSession();
+  try {
+    await searchBoaReservation(session.page, args.locator, args.apellido);
+    const pases = await getBoardingPassForJourney(session.page, args.tramo);
+    const targetPass = args.pasajero
+      ? pases.find((p) => p.nombre.toLowerCase().includes(args.pasajero!.toLowerCase()))
+      : pases[0];
+    if (!targetPass) {
+      throw new Error(
+        `No encontré el boarding pass de "${args.pasajero ?? "el pasajero"}" — pasajeros con boarding pass en este tramo: ${pases.map((p) => p.nombre).join(", ") || "ninguno"}.`,
+      );
+    }
+
+    const scrapeData = await getWalletPassScrapeData(session.page, args.locator, args.tramo, targetPass.nombre);
+
+    const pdfRes = await fetch(targetPass.url);
+    if (!pdfRes.ok) throw new Error(`No pude descargar el PDF del boarding pass (HTTP ${pdfRes.status}).`);
+    const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+    const barcodeMessage = await decodeBoardingPassBarcode(pdfBuffer);
+
+    const assets = {
+      iconPng: readFileSync(join(ASSETS_DIR, "boa-icon.png")),
+      icon2xPng: readFileSync(join(ASSETS_DIR, "boa-icon@2x.png")),
+      logoPng: readFileSync(join(ASSETS_DIR, "boa-logo.png")),
+      logo2xPng: readFileSync(join(ASSETS_DIR, "boa-logo@2x.png")),
+    };
+
+    const pkpassBuffer = await signAndPackagePass({ ...scrapeData, barcodeMessage }, config, assets);
+    const pkpassPath = join(
+      tmpdir(),
+      `boa-wallet-${args.locator}-${targetPass.nombre.replace(/\s+/g, "")}.pkpass`,
+    );
+    writeFileSync(pkpassPath, pkpassBuffer);
+
+    return asText({ pasajero: targetPass.nombre, pkpassPath });
+  } finally {
+    await session.close();
+  }
+}
+
 const server = new Server(
   { name: "boa-checkin", version: "0.1.0" },
   { capabilities: { tools: {} } },
@@ -327,6 +390,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "generateBoaWalletPass",
+      description:
+        "Genera un archivo .pkpass (Apple Wallet) escaneable del boarding pass de UN pasajero de un tramo de BoA YA checkeado — usar SOLO cuando Cal pida explícitamente 'el pase de Wallet'/'agrégalo a Wallet' (no se genera automáticamente junto al PDF). El código de barras es el mismo BCBP real del PDF oficial (decodificado del PDF417), así que sirve igual que el PDF en el control de embarque. `pasajero` (substring de nombre) desambigua si la reserva tiene más de uno; sin él toma el primero. Devuelve { pasajero, pkpassPath } — pkpassPath es un archivo LOCAL (no URL pública), hay que mandarlo con la tool de documento LOCAL del daemon, no con enviarDocumentoUrl. Si falta configurar el certificado (BOA_WALLET_* en apps.env) o el tramo no tiene el check-in hecho, tira error explícito.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          locator: { type: "string" },
+          apellido: { type: "string" },
+          tramo: { type: "string" },
+          pasajero: { type: "string", description: "Substring del nombre del pasajero, solo necesario si la reserva tiene más de uno." },
+        },
+        required: ["locator", "apellido"],
+        additionalProperties: false,
+      },
+    },
   ],
 }));
 
@@ -338,6 +417,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "manageBoaSeat") return await withLock(() => manageBoaSeat(args as unknown as SeatChangeArgs));
     if (name === "getBoaBoardingPass") return await withLock(() => getBoaBoardingPass(args as unknown as BoardingPassArgs));
     if (name === "setBoaFrequentFlyer") return await withLock(() => setBoaFrequentFlyer(args as unknown as FrequentFlyerArgs));
+    if (name === "generateBoaWalletPass") return await withLock(() => generateBoaWalletPass(args as unknown as WalletPassArgs));
     return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
   } catch (err) {
     return { isError: true, content: [{ type: "text", text: `Error en ${name}: ${(err as Error).message}` }] };
