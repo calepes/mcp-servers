@@ -1,6 +1,7 @@
 import { createCanvas } from "@napi-rs/canvas";
 // pdfjs-dist's legacy Node build works without any DOM globals.
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import { readBarcodes } from "zxing-wasm/reader";
 
 class NodeCanvasFactory {
   create(width: number, height: number) {
@@ -52,4 +53,27 @@ export async function renderPdfFirstPageToImageData(
     // PDFDocumentProxy resuelto (pdfDocument.destroy no existe).
     await loadingTask.destroy();
   }
+}
+
+export async function decodePdf417FromImageData(imageData: {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}): Promise<string> {
+  const results = await readBarcodes(imageData, {
+    tryHarder: true,
+    formats: ["PDF417"],
+  });
+  if (results.length === 0) {
+    throw new Error(
+      "No se pudo decodificar ningún PDF417 en la imagen del boarding pass — probablemente la resolución del render es insuficiente. Subir `scale` en renderPdfFirstPageToImageData.",
+    );
+  }
+  return results[0].text;
+}
+
+/** Combina render + decode: PDF del boarding pass -> string BCBP crudo. */
+export async function decodeBoardingPassBarcode(pdfBuffer: Buffer): Promise<string> {
+  const imageData = await renderPdfFirstPageToImageData(pdfBuffer, 3);
+  return decodePdf417FromImageData(imageData);
 }
