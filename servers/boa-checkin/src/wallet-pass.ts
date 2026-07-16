@@ -142,11 +142,27 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
 }
 
 /**
- * Arma y firma el `.pkpass` final. A diferencia de `buildBoaPassFields`,
- * esto SÍ toca certificados — no tiene test unitario con cripto real (el
- * `.p12` de Cal no vive en el repo); se valida con el flujo E2E una vez que
- * Cal tenga certificado real de Apple Developer (ver docs/superpowers/specs/
- * 2026-07-15-boa-wallet-pass-design.md).
+ * Lee un archivo de certificado del filesystem para pasarlo a `passkit-generator`.
+ * Envuelve `readFileSync` con un error explícito (path + qué config key tocar)
+ * en vez de dejar pasar el `ENOENT` crudo de Node — mismo criterio que
+ * `loadWalletPassConfig` ya aplica para env vars faltantes.
+ */
+function readCertFile(path: string, label: string): Buffer {
+  try {
+    return readFileSync(path);
+  } catch (err) {
+    throw new Error(
+      `No se pudo leer ${label} en "${path}" — revisar el path en apps.env. Error original: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * NO tiene test unitario con cripto real (el `.p12`/certs de Cal no viven en
+ * el repo) — se valida con el flujo E2E una vez que Cal tenga certificado
+ * real de Apple Developer (ver docs/superpowers/specs/2026-07-15-boa-wallet-
+ * pass-design.md). Arma y firma el `.pkpass` final; a diferencia de
+ * `buildBoaPassFields`, esto SÍ toca certificados.
  *
  * Verificado contra `passkit-generator@3.5.7` (README + lib/types/*.d.ts):
  * - `certificates` SÍ espera `wwdr`/`signerCert`/`signerKey` como PEM
@@ -182,15 +198,20 @@ export async function signAndPackagePass(
   const pass = new PKPass(
     {},
     {
-      wwdr: readFileSync(config.wwdrPath),
-      signerCert: readFileSync(config.signerCertPath),
-      signerKey: readFileSync(config.signerKeyPath),
+      wwdr: readCertFile(config.wwdrPath, "el certificado WWDR"),
+      signerCert: readCertFile(config.signerCertPath, "el cert de firma"),
+      signerKey: readCertFile(config.signerKeyPath, "la clave de firma"),
       signerKeyPassphrase: config.signerKeyPassphrase,
     },
     {
       passTypeIdentifier: config.passTypeIdentifier,
       teamIdentifier: config.teamIdentifier,
-      serialNumber: `${data.locator}-${data.flightNumber}-${data.passengerName.replace(/\s+/g, "")}`,
+      // Sanitiza espacios de las 3 partes (locator/flightNumber pueden traer
+      // espacios, ej. "OB 601") — Apple no restringe el formato de
+      // serialNumber, esto es solo para evitar espacios sueltos en el string.
+      serialNumber: [data.locator, data.flightNumber, data.passengerName]
+        .map((part) => part.replace(/\s+/g, ""))
+        .join("-"),
       organizationName: "Boliviana de Aviación",
       description: `Boarding pass ${data.flightNumber} ${data.originCode}-${data.destinationCode}`,
       formatVersion: 1,
