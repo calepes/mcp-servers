@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadWalletPassConfig } from "./wallet-pass.js";
+import { loadWalletPassConfig, buildBoaPassFields, type WalletPassData } from "./wallet-pass.js";
 
 const ENV_KEYS = [
   "BOA_WALLET_PASS_TYPE_ID",
@@ -48,5 +48,74 @@ describe("loadWalletPassConfig", () => {
       signerKeyPassphrase: undefined,
       wwdrPath: "/tmp/wwdr.pem",
     });
+  });
+});
+
+const sampleData: WalletPassData = {
+  locator: "XK9F2P",
+  passengerName: "Carlos Lepesqueur",
+  frequentFlyerNumber: "EL 048213",
+  flightNumber: "OB682",
+  originCode: "LPB",
+  originName: "La Paz — El Alto Intl.",
+  destinationCode: "VVI",
+  destinationName: "Viru Viru Intl., Santa Cruz",
+  departureTime: "19:10",
+  boardingTime: "18:40",
+  flightDate: "07 jul",
+  seat: "25C",
+  boardingGroup: "2",
+  travelClass: "Economy",
+  boardingSequence: "014",
+  gate: undefined,
+  barcodeMessage: "M1LEPESQUEUER/CARLOS  EXK9F2P OB682 190 25C0014 147>",
+};
+
+describe("buildBoaPassFields", () => {
+  it("puts the route in primaryFields and departure time in secondaryFields", () => {
+    const fields = buildBoaPassFields(sampleData);
+    expect(fields.primaryFields).toEqual([
+      { key: "origin", label: "LA PAZ", value: "LPB" },
+      { key: "destination", label: "SANTA CRUZ", value: "VVI" },
+    ]);
+    expect(fields.secondaryFields).toEqual([
+      { key: "departure", label: "SALIDA", value: "19:10" },
+    ]);
+  });
+
+  it("puts group/gate/seat in auxiliaryFields, using a placeholder for missing gate", () => {
+    const fields = buildBoaPassFields(sampleData);
+    expect(fields.auxiliaryFields).toEqual([
+      { key: "group", label: "GRUPO", value: "2" },
+      { key: "gate", label: "PUERTA", value: "—" },
+      { key: "seat", label: "ASIENTO", value: "25C" },
+    ]);
+  });
+
+  it("includes the frequent flyer number in headerFields when present", () => {
+    const fields = buildBoaPassFields(sampleData);
+    expect(fields.headerFields).toEqual([
+      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
+    ]);
+  });
+
+  it("omits headerFields entirely when there is no frequent flyer number", () => {
+    const fields = buildBoaPassFields({ ...sampleData, frequentFlyerNumber: undefined });
+    expect(fields.headerFields).toEqual([]);
+  });
+
+  it("fills backFields with locator, sequence and full airport names", () => {
+    const fields = buildBoaPassFields(sampleData);
+    expect(fields.backFields).toEqual([
+      { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
+      { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "014" },
+      { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
+      { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
+      {
+        key: "contact",
+        label: "CONTACTO",
+        value: "Boliviana de Aviación · consultas: boa.bo",
+      },
+    ]);
   });
 });
