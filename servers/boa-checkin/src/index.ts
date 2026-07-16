@@ -15,9 +15,14 @@ import {
 import { missingBoaFields } from "./missing-fields.js";
 import {
   searchBoaReservation,
+  selectJourney,
+  advancePastPassengerSelection,
   listBoaPassengers,
   fillRequiredInfo,
   getSeatOptions,
+  openSeatChangeForJourney,
+  getBoardingPassForJourney,
+  setFrequentFlyer,
   confirmSeatAndContinue,
   getBoardingPassUrl,
 } from "./flow.js";
@@ -28,9 +33,22 @@ function asText(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
 }
 
+// Todas las tools comparten un único perfil de Chrome (PROFILE_DIR fijo en
+// browser.ts) — dos sesiones concurrentes colisionan (Chrome fuerza single-
+// instance por perfil) y corrompen el estado de la página a medio navegar.
+// Serializa toda llamada a las tools de este server, sin importar cuántas
+// lance el LLM en paralelo.
+let chain: Promise<unknown> = Promise.resolve();
+function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = chain.catch(() => {}).then(fn);
+  chain = run.catch(() => {});
+  return run;
+}
+
 interface PrepareArgs {
   locator: string;
   apellido: string;
+  tramo?: string;
   pasajeros?: string[];
   datosAdicionales?: Record<string, { lugarNacimiento?: string; pasaporte?: BoaPasaporte }>;
 }
@@ -38,8 +56,30 @@ interface PrepareArgs {
 interface ConfirmArgs {
   locator: string;
   apellido: string;
+  tramo?: string;
   pasajeros?: string[];
   asientos?: Record<string, string>;
+}
+
+interface SeatChangeArgs {
+  locator: string;
+  apellido: string;
+  tramo?: string;
+  asiento?: string;
+}
+
+interface BoardingPassArgs {
+  locator: string;
+  apellido: string;
+  tramo?: string;
+}
+
+interface FrequentFlyerArgs {
+  locator: string;
+  apellido: string;
+  tramo?: string;
+  pasajero?: string;
+  numero: string;
 }
 
 async function prepareBoaCheckin(args: PrepareArgs) {
@@ -52,10 +92,21 @@ async function prepareBoaCheckin(args: PrepareArgs) {
   const session = await openBoaBrowserSession();
   try {
     await searchBoaReservation(session.page, args.locator, args.apellido);
+    await selectJourney(session.page, args.tramo);
     const passengers = await listBoaPassengers(session.page);
+    if (passengers.length === 0) {
+      throw new Error(
+        "BoA no devolvió ningún pasajero para esta reserva/tramo — revisar locator/apellido, o si el tramo elegido es el correcto.",
+      );
+    }
     const filtered = args.pasajeros?.length
       ? passengers.filter((p) => args.pasajeros!.some((n) => p.nombre.toLowerCase().includes(n.toLowerCase())))
       : passengers;
+    if (filtered.length === 0) {
+      throw new Error(
+        `El filtro \`pasajeros\` no matcheó a nadie. Pasajeros de la reserva: ${passengers.map((p) => p.nombre).join(", ")}`,
+      );
+    }
 
     const statuses: { nombre: string; yaCheckeado: boolean; faltantes: string[] }[] = [];
     for (const p of filtered) {
@@ -74,7 +125,8 @@ async function prepareBoaCheckin(args: PrepareArgs) {
       return asText({ pasajeros: statuses, asientos: null });
     }
 
-    // Todos listos: llenar y avanzar hasta el mapa de asientos.
+    // Todos listos: pasar la selección de pasajeros/declaración y avanzar hasta el mapa de asientos.
+    await advancePastPassengerSelection(session.page);
     const asientos: Record<string, unknown> = {};
     for (const s of statuses) {
       if (s.yaCheckeado) continue;
@@ -92,11 +144,23 @@ async function confirmBoaCheckin(args: ConfirmArgs) {
   const session = await openBoaBrowserSession();
   try {
     await searchBoaReservation(session.page, args.locator, args.apellido);
+    await selectJourney(session.page, args.tramo);
     const passengers = await listBoaPassengers(session.page);
+    if (passengers.length === 0) {
+      throw new Error(
+        "BoA no devolvió ningún pasajero para esta reserva/tramo — revisar locator/apellido, o si el tramo elegido es el correcto.",
+      );
+    }
     const filtered = args.pasajeros?.length
       ? passengers.filter((p) => args.pasajeros!.some((n) => p.nombre.toLowerCase().includes(n.toLowerCase())))
       : passengers;
+    if (filtered.length === 0) {
+      throw new Error(
+        `El filtro \`pasajeros\` no matcheó a nadie. Pasajeros de la reserva: ${passengers.map((p) => p.nombre).join(", ")}`,
+      );
+    }
 
+    await advancePastPassengerSelection(session.page);
     const resultados: { nombre: string; boardingPassUrl: string }[] = [];
     for (const p of filtered) {
       if (!p.yaCheckeado) {
@@ -106,10 +170,69 @@ async function confirmBoaCheckin(args: ConfirmArgs) {
         await getSeatOptions(session.page);
         await confirmSeatAndContinue(session.page, args.asientos?.[p.nombre]);
       }
-      const url = await getBoardingPassUrl(session.page);
+      const url = await getBoardingPassUrl(session.page, p.nombre);
       resultados.push({ nombre: p.nombre, boardingPassUrl: url });
     }
     return asText({ pasajeros: resultados });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Cambia el asiento de un pasajero cuyo check-in YA está confirmado (flujo
+ * "Manage your booking > Change seats" — distinto de prepareBoaCheckin, que
+ * es para check-in nuevo). Sin `asiento`, solo lee el mapa actual (preselec-
+ * cionado + alternativas libres) sin tocar nada — el LLM debe mostrárselo a
+ * Cal y confirmar el código elegido ANTES de volver a llamar con `asiento`.
+ */
+async function manageBoaSeat(args: SeatChangeArgs) {
+  const session = await openBoaBrowserSession();
+  try {
+    await searchBoaReservation(session.page, args.locator, args.apellido);
+    const opciones = await openSeatChangeForJourney(session.page, args.tramo);
+    if (!args.asiento) {
+      return asText({ actual: opciones.preseleccionado, alternativas: opciones.alternativas });
+    }
+    await confirmSeatAndContinue(session.page, args.asiento);
+    return asText({ actualizado: true, nuevoAsiento: args.asiento });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Recupera el boarding pass de TODOS los pasajeros de un tramo de BoA YA
+ * confirmado — sin volver a hacer check-in ni tocar el asiento. Gap real
+ * encontrado 2026-07-04: Cal pidió "dame el boarding" para un vuelo ya
+ * checkeado y no había tool para eso, así que el LLM alucinaba que el
+ * check-in no estaba abierto en vez de simplemente ir a buscar el PDF.
+ * Bug real #2 (mismo día, producción vía Vesta): una reserva de 3 pasajeros
+ * devolvía un solo PDF — arreglado devolviendo un array, uno por pasajero
+ * (ver `getAllBoardingPasses` en flow.ts).
+ */
+async function getBoaBoardingPass(args: BoardingPassArgs) {
+  const session = await openBoaBrowserSession();
+  try {
+    await searchBoaReservation(session.page, args.locator, args.apellido);
+    const pases = await getBoardingPassForJourney(session.page, args.tramo);
+    return asText({ boardingPasses: pases.map((p) => ({ nombre: p.nombre, boardingPassUrl: p.url })) });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Carga o edita el número de viajero frecuente (Elévate) de un pasajero en un
+ * tramo YA checkeado. Gap real encontrado 2026-07-04 (mismo patrón que
+ * getBoaBoardingPass): Cal pidió agregar su número y no había tool para eso.
+ */
+async function setBoaFrequentFlyer(args: FrequentFlyerArgs) {
+  const session = await openBoaBrowserSession();
+  try {
+    await searchBoaReservation(session.page, args.locator, args.apellido);
+    await setFrequentFlyer(session.page, args.numero, { tramo: args.tramo, pasajero: args.pasajero });
+    return asText({ actualizado: true, numero: args.numero });
   } finally {
     await session.close();
   }
@@ -125,12 +248,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "prepareBoaCheckin",
       description:
-        "Busca una reserva de BoA (Boliviana de Aviación) por locator+apellido y prepara el check-in de todos sus pasajeros (o el subconjunto en `pasajeros`). Rellena datos personales/pasaporte desde datos-viaje.json. Devuelve por pasajero { nombre, yaCheckeado, faltantes } y, si a todos no les falta nada, además los asientos preseleccionados/alternativas. Si faltan datos, pedíselos a Cal y volvé a llamar esta tool pasando `datosAdicionales` con las respuestas — se guardan para la próxima vez.",
+        "Busca una reserva de BoA (Boliviana de Aviación) por locator+apellido y prepara el check-in de todos sus pasajeros (o el subconjunto en `pasajeros`). Si la reserva tiene más de un tramo (ida y vuelta, multi-destino), BoA pide elegir cuál — pasá `tramo` (título COMPLETO, ej. 'Santa Cruz to La Paz', no solo la ciudad: en un ida-y-vuelta AMBOS tramos suelen mencionar la misma ciudad, así que una ciudad sola es ambigua) para desambiguar; si hay un solo tramo con check-in abierto se usa automáticamente, y si no se especifica y hay ambigüedad la tool tira error listando las opciones con sus títulos completos — usá ESE texto literal en el siguiente llamado. IMPORTANTE si hay 2+ tramos: esta tool YA avanza hasta selección de asiento en el sitio de BoA (deja un hold temporal), así que hay que procesar UN TRAMO COMPLETO por vez — prepare→mostrar a Cal→confirmBoaCheckin de ESE tramo, recién DESPUÉS pasar al siguiente. Nunca llames esta tool en paralelo ni dos veces seguidas para tramos distintos sin confirmar el primero: puede dejar la reserva bloqueada del lado de BoA (incidente real 2026-07-12, tardó horas en liberarse). Rellena datos personales/pasaporte desde datos-viaje.json. Devuelve por pasajero { nombre, yaCheckeado, faltantes } y, si a todos no les falta nada, además los asientos preseleccionados/alternativas. Si faltan datos, pedíselos a Cal y volvé a llamar esta tool pasando `datosAdicionales` con las respuestas — se guardan para la próxima vez.",
       inputSchema: {
         type: "object",
         properties: {
           locator: { type: "string" },
           apellido: { type: "string" },
+          tramo: { type: "string", description: "Título COMPLETO del tramo (ej. 'Santa Cruz to La Paz'), solo necesario si la reserva tiene más de un tramo con check-in abierto simultáneamente. NO pasar solo el nombre de una ciudad — es ambiguo en ida-y-vuelta." },
           pasajeros: { type: "array", items: { type: "string" } },
           datosAdicionales: { type: "object" },
         },
@@ -141,16 +265,65 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "confirmBoaCheckin",
       description:
-        "Confirma el check-in (asientos + submit) de los pasajeros de una reserva ya preparada con prepareBoaCheckin, y devuelve la URL pública del boarding pass de cada uno (para mandar con sendDocument). `asientos` es opcional: { [nombre]: 'código de asiento' } para pisar el preseleccionado de alguien puntual.",
+        "Confirma el check-in (asientos + submit) de los pasajeros de una reserva ya preparada con prepareBoaCheckin, y devuelve la URL pública del boarding pass de cada uno (para mandar con sendDocument). Mismo parámetro `tramo` que prepareBoaCheckin (título COMPLETO, ej. 'Santa Cruz to La Paz' — no solo la ciudad) si la reserva tiene varios tramos abiertos. Llamala INMEDIATAMENTE después del prepareBoaCheckin de ese mismo tramo, antes de tocar cualquier otro tramo de la reserva. `asientos` es opcional: { [nombre]: 'código de asiento' } para pisar el preseleccionado de alguien puntual.",
       inputSchema: {
         type: "object",
         properties: {
           locator: { type: "string" },
           apellido: { type: "string" },
+          tramo: { type: "string" },
           pasajeros: { type: "array", items: { type: "string" } },
           asientos: { type: "object" },
         },
         required: ["locator", "apellido"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "manageBoaSeat",
+      description:
+        "Cambia el asiento de un pasajero cuyo check-in de BoA YA está confirmado (distinto de prepareBoaCheckin/confirmBoaCheckin, que son para check-in nuevo). Sin `asiento`: solo devuelve { actual, alternativas } (asiento actual + libres) sin cambiar nada — mostrárselo a Cal y confirmar el código ANTES de volver a llamar con `asiento`. Con `asiento`: confirma el cambio y devuelve { actualizado: true, nuevoAsiento }. Mismo `tramo` que las otras tools si la reserva tiene varios tramos con check-in hecho.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          locator: { type: "string" },
+          apellido: { type: "string" },
+          tramo: { type: "string" },
+          asiento: { type: "string", description: "Código de asiento (ej. '12C'). Si se omite, la tool solo lee las opciones disponibles sin cambiar nada." },
+        },
+        required: ["locator", "apellido"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "getBoaBoardingPass",
+      description:
+        "Recupera el boarding pass de TODOS los pasajeros de un tramo de BoA YA confirmado (NO hace check-in ni cambia asiento — usar cuando pidan 'dame el boarding'/'mándame la tarjeta de embarque' de un vuelo que ya sabés que está checkeado). Devuelve { boardingPasses: [{ nombre, boardingPassUrl }] } — un item por pasajero (si la reserva tiene 3 pasajeros, devuelve 3). Mandá CADA URL como documento separado, nunca como texto/link. Mismo `tramo` que las otras tools si la reserva tiene varios tramos con check-in hecho. Si el check-in de ese tramo NO está hecho todavía, tira error explícito (no asumas fechas de apertura por tu cuenta — dejá que el error lo diga).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          locator: { type: "string" },
+          apellido: { type: "string" },
+          tramo: { type: "string" },
+        },
+        required: ["locator", "apellido"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "setBoaFrequentFlyer",
+      description:
+        "Carga o edita el número de viajero frecuente (Elévate) de un pasajero en un tramo de BoA YA checkeado (usar cuando pidan 'agrega mi número de viajero frecuente'/'carga mi Elévate'). El programa se asume siempre BoA/Elévate. `pasajero` (substring de nombre) solo hace falta si la reserva tiene más de un pasajero. Devuelve { actualizado: true, numero }. Si el tramo no tiene el check-in hecho, tira error explícito.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          locator: { type: "string" },
+          apellido: { type: "string" },
+          tramo: { type: "string" },
+          pasajero: { type: "string", description: "Nombre (o parte) del pasajero a actualizar, solo necesario si la reserva tiene más de uno." },
+          numero: { type: "string", description: "Número de viajero frecuente de Elévate (BoA)." },
+        },
+        required: ["locator", "apellido", "numero"],
         additionalProperties: false,
       },
     },
@@ -160,8 +333,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   try {
-    if (name === "prepareBoaCheckin") return await prepareBoaCheckin(args as unknown as PrepareArgs);
-    if (name === "confirmBoaCheckin") return await confirmBoaCheckin(args as unknown as ConfirmArgs);
+    if (name === "prepareBoaCheckin") return await withLock(() => prepareBoaCheckin(args as unknown as PrepareArgs));
+    if (name === "confirmBoaCheckin") return await withLock(() => confirmBoaCheckin(args as unknown as ConfirmArgs));
+    if (name === "manageBoaSeat") return await withLock(() => manageBoaSeat(args as unknown as SeatChangeArgs));
+    if (name === "getBoaBoardingPass") return await withLock(() => getBoaBoardingPass(args as unknown as BoardingPassArgs));
+    if (name === "setBoaFrequentFlyer") return await withLock(() => setBoaFrequentFlyer(args as unknown as FrequentFlyerArgs));
     return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
   } catch (err) {
     return { isError: true, content: [{ type: "text", text: `Error en ${name}: ${(err as Error).message}` }] };
