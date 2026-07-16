@@ -33,6 +33,16 @@ import { loadWalletPassConfig, signAndPackagePass } from "./wallet-pass.js";
 
 const ASSETS_DIR = join(import.meta.dirname, "..", "assets");
 
+function readAssetFile(filename: string): Buffer {
+  try {
+    return readFileSync(join(ASSETS_DIR, filename));
+  } catch (err) {
+    throw new Error(
+      `No se pudo leer el asset "${filename}" en ${ASSETS_DIR} — probablemente todavía no se generaron/aprobaron los assets de marca de BoA. Error original: ${(err as Error).message}`,
+    );
+  }
+}
+
 const TRAVELERS_PATH = join(homedir(), ".claude", "datos-viaje.json");
 
 function asText(result: unknown) {
@@ -276,16 +286,21 @@ async function generateBoaWalletPass(args: WalletPassArgs) {
 
     const scrapeData = await getWalletPassScrapeData(session.page, args.locator, args.tramo, targetPass.nombre);
 
-    const pdfRes = await fetch(targetPass.url);
+    let pdfRes: Response;
+    try {
+      pdfRes = await fetch(targetPass.url);
+    } catch (err) {
+      throw new Error(`No pude conectar para descargar el PDF del boarding pass: ${(err as Error).message}`);
+    }
     if (!pdfRes.ok) throw new Error(`No pude descargar el PDF del boarding pass (HTTP ${pdfRes.status}).`);
     const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
     const barcodeMessage = await decodeBoardingPassBarcode(pdfBuffer);
 
     const assets = {
-      iconPng: readFileSync(join(ASSETS_DIR, "boa-icon.png")),
-      icon2xPng: readFileSync(join(ASSETS_DIR, "boa-icon@2x.png")),
-      logoPng: readFileSync(join(ASSETS_DIR, "boa-logo.png")),
-      logo2xPng: readFileSync(join(ASSETS_DIR, "boa-logo@2x.png")),
+      iconPng: readAssetFile("boa-icon.png"),
+      icon2xPng: readAssetFile("boa-icon@2x.png"),
+      logoPng: readAssetFile("boa-logo.png"),
+      logo2xPng: readAssetFile("boa-logo@2x.png"),
     };
 
     const pkpassBuffer = await signAndPackagePass({ ...scrapeData, barcodeMessage }, config, assets);
