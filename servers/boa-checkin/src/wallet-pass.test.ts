@@ -118,4 +118,27 @@ describe("buildBoaPassFields", () => {
       },
     ]);
   });
+
+  it("falls back to the whole trimmed+uppercased name when neither delimiter is present", () => {
+    const fields = buildBoaPassFields({ ...sampleData, originName: "El Alto" });
+    expect(fields.primaryFields).toEqual([
+      { key: "origin", label: "EL ALTO", value: "LPB" },
+      { key: "destination", label: "SANTA CRUZ", value: "VVI" },
+    ]);
+  });
+
+  it("falls back to a placeholder in backFields when boardingSequence is missing", () => {
+    const fields = buildBoaPassFields({ ...sampleData, boardingSequence: undefined });
+    expect(fields.backFields).toEqual([
+      { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
+      { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "—" },
+      { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
+      { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
+      {
+        key: "contact",
+        label: "CONTACTO",
+        value: "Boliviana de Aviación · consultas: boa.bo",
+      },
+    ]);
+  });
 });

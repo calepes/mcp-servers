@@ -45,6 +45,10 @@ export function loadWalletPassConfig(): WalletPassConfig {
 
 export interface WalletPassData {
   locator: string;
+  // passengerName, flightNumber, boardingTime, flightDate y travelClass NO
+  // los usa buildBoaPassFields todavía — están reservados para los campos
+  // top-level del pass.json (description/serialNumber/etc.) que va a
+  // necesitar el paso de firma de Task 7. No son campos muertos.
   passengerName: string;
   frequentFlyerNumber?: string;
   flightNumber: string;
@@ -86,6 +90,12 @@ export interface BoaPassFields {
  * formato (devolvería "VIRU VIRU INTL." en vez de "SANTA CRUZ"). Por eso:
  * si hay guión largo, la ciudad está ANTES; si no y hay coma, la ciudad
  * está DESPUÉS de la última coma.
+ *
+ * Asume que un nombre tiene como máximo uno de estos delimitadores — no
+ * verificado contra el listado completo de aeropuertos de BoA. Si algún
+ * nombre real trae AMBOS (ej. "Viru Viru Intl., Santa Cruz — Bolivia"), la
+ * rama del guión largo gana primero y el resultado sale mal en silencio
+ * ("VIRU VIRU INTL., SANTA CRUZ" en vez de "SANTA CRUZ").
  */
 function shortAirportLabel(name: string): string {
   if (name.includes("—")) {
