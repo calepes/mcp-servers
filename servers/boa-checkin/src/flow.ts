@@ -1,6 +1,7 @@
 import type { Page, Frame } from "playwright";
 import type { BoaTraveler } from "./travelers.js";
 import { missingBoaFields } from "./missing-fields.js";
+import type { WalletPassData } from "./wallet-pass.js";
 
 /**
  * `page.frame()` es sincrónico y devuelve null si el <iframe> todavía no se
@@ -413,6 +414,68 @@ export async function getBoardingPassForJourney(page: Page, tramo?: string): Pro
   const frame = await waitForAmadeusFrame(page);
   await openManageBooking(frame, tramo);
   return getAllBoardingPasses(page);
+}
+
+/**
+ * Recopila TODOS los datos visuales que necesita `buildBoaPassFields` desde
+ * "Manage your booking"/"Your boarding pass" — el mismo camino que ya usa
+ * `getBoardingPassForJourney`. NO decodifica el BCBP (eso lo hace
+ * `decodeBoardingPassBarcode` sobre el PDF descargado aparte); esto es solo
+ * lo que ya está visible en pantalla.
+ *
+ * ⚠️ NO VALIDADO contra una reserva real de BoA (Task 9, 2026-07-16): los
+ * regexes de abajo son un best-effort sobre cómo debería verse el texto de la
+ * fila, mirroreando el parsing ya probado en `getAllBoardingPasses` (el match
+ * `Passenger\n(nombre)` unas líneas arriba en este mismo archivo, ese SÍ
+ * validado en vivo). Antes de confiar en esto en producción, correr contra
+ * una reserva confirmada real (locator/apellido que dé Cal), loguear
+ * `rowText` y ajustar los regex al texto real — igual que el resto de las
+ * funciones de este archivo (ver comentarios "Bug real ..." de arriba, todos
+ * fruto de esa misma iteración). Validación explícitamente diferida a la
+ * verificación E2E manual del plan (Task 13).
+ */
+export async function getWalletPassScrapeData(
+  page: Page,
+  locator: string,
+  tramo?: string,
+  nombre?: string,
+): Promise<Omit<WalletPassData, "barcodeMessage">> {
+  const frame = await waitForAmadeusFrame(page);
+  await openManageBooking(frame, tramo);
+
+  const passengerRow = frame.getByRole("listitem").filter({ hasText: nombre ?? "" }).first();
+  const rowText = await passengerRow.innerText();
+
+  const flightNumber = (rowText.match(/\b(OB\d{2,4})\b/) || [])[1] ?? "";
+  const route = rowText.match(/([A-Z]{3})\s*(?:to|→|-)\s*([A-Z]{3})/i);
+  const originCode = route?.[1]?.toUpperCase() ?? "";
+  const destinationCode = route?.[2]?.toUpperCase() ?? "";
+  const seat = (rowText.match(/Seat\s*([0-9]{1,2}[A-Z])/i) || [])[1] ?? "";
+  const boardingGroup = (rowText.match(/Group\s*([0-9]+)/i) || [])[1] ?? "";
+  const gate = (rowText.match(/Gate\s*([A-Z0-9]+)/i) || [])[1];
+  const travelClass = /business/i.test(rowText) ? "Business" : "Economy";
+  const departureTime = (rowText.match(/Departure\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1] ?? "";
+  const boardingTime = (rowText.match(/Boarding\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1] ?? "";
+  const flightDate = (rowText.match(/([0-9]{1,2}\s+[A-Za-z]{3}\b)/) || [])[1] ?? "";
+  const frequentFlyerMatch = rowText.match(/Elevate\s*[:#]?\s*([A-Z0-9 ]{4,})/i);
+
+  return {
+    locator,
+    passengerName: (nombre ?? rowText.match(/Passenger\n([A-Za-zÀ-ÿ' -]+)/)?.[1] ?? "").trim(),
+    frequentFlyerNumber: frequentFlyerMatch?.[1]?.trim(),
+    flightNumber,
+    originCode,
+    originName: originCode, // placeholder legible — reemplazar con el mapeo IATA->nombre completo si BoA lo muestra en pantalla
+    destinationCode,
+    destinationName: destinationCode,
+    departureTime,
+    boardingTime,
+    flightDate,
+    seat,
+    boardingGroup,
+    travelClass,
+    gate,
+  };
 }
 
 /**
