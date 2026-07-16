@@ -8,10 +8,6 @@ class NodeCanvasFactory {
     const context = canvas.getContext("2d");
     return { canvas, context };
   }
-  reset(canvasAndContext: { canvas: any }, width: number, height: number) {
-    canvasAndContext.canvas.width = width;
-    canvasAndContext.canvas.height = height;
-  }
   destroy(canvasAndContext: { canvas: any; context: any }) {
     canvasAndContext.canvas.width = 0;
     canvasAndContext.canvas.height = 0;
@@ -37,17 +33,20 @@ export async function renderPdfFirstPageToImageData(
     const viewport = page.getViewport({ scale });
     const canvasFactory = new NodeCanvasFactory();
     const canvasAndContext = canvasFactory.create(viewport.width, viewport.height);
-    // pdfjs-dist 6.x ya no acepta `canvasFactory` en render() (API vieja) —
-    // ahora toma el canvas/contexto directo. `canvas` queda null porque
-    // usamos `canvasContext` (contexto 2D de @napi-rs/canvas) explícito.
-    await page.render({
-      canvas: null,
-      canvasContext: canvasAndContext.context as any,
-      viewport,
-    } as any).promise;
-    const imageData = canvasAndContext.context.getImageData(0, 0, viewport.width, viewport.height);
-    canvasFactory.destroy(canvasAndContext);
-    return { data: imageData.data as Uint8ClampedArray, width: imageData.width, height: imageData.height };
+    try {
+      // pdfjs-dist 6.x ya no acepta `canvasFactory` en render() (API vieja) —
+      // ahora toma el canvas/contexto directo. `canvas` queda null porque
+      // usamos `canvasContext` (contexto 2D de @napi-rs/canvas) explícito.
+      await page.render({
+        canvas: null,
+        canvasContext: canvasAndContext.context,
+        viewport,
+      }).promise;
+      const imageData = canvasAndContext.context.getImageData(0, 0, viewport.width, viewport.height);
+      return { data: imageData.data, width: imageData.width, height: imageData.height };
+    } finally {
+      canvasFactory.destroy(canvasAndContext);
+    }
   } finally {
     // En pdfjs-dist 6.1.200, destroy() vive en loadingTask, no en el
     // PDFDocumentProxy resuelto (pdfDocument.destroy no existe).
