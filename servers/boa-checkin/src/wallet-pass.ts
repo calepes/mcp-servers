@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { PKPass } from "passkit-generator";
+
 export interface WalletPassConfig {
   passTypeIdentifier: string;
   teamIdentifier: string;
@@ -136,4 +139,81 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
       { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },
     ],
   };
+}
+
+/**
+ * Arma y firma el `.pkpass` final. A diferencia de `buildBoaPassFields`,
+ * esto SÍ toca certificados — no tiene test unitario con cripto real (el
+ * `.p12` de Cal no vive en el repo); se valida con el flujo E2E una vez que
+ * Cal tenga certificado real de Apple Developer (ver docs/superpowers/specs/
+ * 2026-07-15-boa-wallet-pass-design.md).
+ *
+ * Verificado contra `passkit-generator@3.5.7` (README + lib/types/*.d.ts):
+ * - `certificates` SÍ espera `wwdr`/`signerCert`/`signerKey` como PEM
+ *   separados (+ `signerKeyPassphrase` opcional) — no un único `.p12`. Esto
+ *   confirma que el shape de `WalletPassConfig` (Task 5) es correcto, no
+ *   hace falta rediseñarlo.
+ * - Constructor real: `new PKPass(buffers, certificates, props)` — 3 args
+ *   posicionales, en ese orden (confirmado en `PKPass.d.ts` y en el ejemplo
+ *   "Buffer Model" del README). `buffers` es `{}` porque las imágenes se
+ *   agregan después vía `addBuffer`.
+ * - `pass.type = "boardingPass"` y `pass.transitType = "PKTransitTypeAir"`
+ *   son setters reales (no van en el constructor).
+ * - `headerFields`/`primaryFields`/etc. son GETTERS que devuelven un
+ *   `FieldsArray` (subclase de `Array` con `push` real) — no hay setter,
+ *   pero `.push(...)` sí muta el pass. Tal cual estaba en el plan.
+ * - `setBarcodes` acepta `(...barcodes: Barcode[])` — pasar un solo objeto
+ *   funciona porque es variádico.
+ * - `addBuffer(pathName, buffer)` existe con esa firma exacta.
+ * - `getAsBuffer()` es SÍNCRONO (devuelve `Buffer`, no `Promise<Buffer>`).
+ *   Como esta función ya es `async`, el `return` lo envuelve en una promesa
+ *   resuelta sin problema — no hace falta `await`.
+ *
+ * Sin deviaciones respecto al snippet del plan: la única duda real (¿p12
+ * único vs PEMs separados?) se resolvió a favor del plan.
+ */
+export async function signAndPackagePass(
+  data: WalletPassData,
+  config: WalletPassConfig,
+  assets: { iconPng: Buffer; icon2xPng: Buffer; logoPng: Buffer; logo2xPng: Buffer },
+): Promise<Buffer> {
+  const fields = buildBoaPassFields(data);
+
+  const pass = new PKPass(
+    {},
+    {
+      wwdr: readFileSync(config.wwdrPath),
+      signerCert: readFileSync(config.signerCertPath),
+      signerKey: readFileSync(config.signerKeyPath),
+      signerKeyPassphrase: config.signerKeyPassphrase,
+    },
+    {
+      passTypeIdentifier: config.passTypeIdentifier,
+      teamIdentifier: config.teamIdentifier,
+      serialNumber: `${data.locator}-${data.flightNumber}-${data.passengerName.replace(/\s+/g, "")}`,
+      organizationName: "Boliviana de Aviación",
+      description: `Boarding pass ${data.flightNumber} ${data.originCode}-${data.destinationCode}`,
+      formatVersion: 1,
+    },
+  );
+
+  pass.type = "boardingPass";
+  pass.transitType = "PKTransitTypeAir";
+  pass.headerFields.push(...fields.headerFields);
+  pass.primaryFields.push(...fields.primaryFields);
+  pass.secondaryFields.push(...fields.secondaryFields);
+  pass.auxiliaryFields.push(...fields.auxiliaryFields);
+  pass.backFields.push(...fields.backFields);
+  pass.setBarcodes({
+    format: "PKBarcodeFormatPDF417",
+    message: data.barcodeMessage,
+    messageEncoding: "iso-8859-1",
+  });
+
+  pass.addBuffer("icon.png", assets.iconPng);
+  pass.addBuffer("icon@2x.png", assets.icon2xPng);
+  pass.addBuffer("logo.png", assets.logoPng);
+  pass.addBuffer("logo@2x.png", assets.logo2xPng);
+
+  return pass.getAsBuffer();
 }
