@@ -18,7 +18,7 @@ Referencia original: handoff Notion "handoff-boa-wallet-pass" (decisiones sobre 
 
 1. **Llegar a los datos del boarding pass** reusando el mismo camino de Playwright que `getBoaBoardingPass` (`openManageBooking` → "View boarding passes" → fila del pasajero). De esa pantalla se extraen dos cosas en paralelo:
    - la URL pública del PDF (`downloadBoardingPassRow`, ya existente)
-   - los campos visibles por scraping de DOM/texto: ruta (origen→destino), fecha, hora de salida, hora de abordaje, asiento, grupo de abordaje, clase. **No** se necesita un parser de BCBP para estos campos — ya están en pantalla.
+   - los campos visibles por scraping de DOM/texto: ruta (origen→destino), fecha, hora de salida, hora de abordaje, asiento, grupo de abordaje, clase, **número de viajero frecuente Elévate (si está cargado)**. **No** se necesita un parser de BCBP para estos campos — ya están en pantalla (el número de Elévate, si existe, aparece en la misma sección "Manage your booking" que ya lee `setBoaFrequentFlyer`).
 2. **Descargar el PDF** desde la URL obtenida en el paso 1.
 3. **Decodificar el PDF417** del PDF para obtener el string BCBP crudo — usado ÚNICAMENTE como payload del barcode del `.pkpass`, no para los campos visuales.
 4. **Armar y firmar el `.pkpass`** con `passkit-generator`: `pass.json` (tipo `boardingPass`, `transitType: PKTransitTypeAir`) poblado con los campos del paso 1, barcode `{ format: "PKBarcodeFormatPDF417", message: <string del paso 3> }`, logo/ícono de BoA como assets, firmado con el cert de Cal + WWDR intermedio de Apple.
@@ -42,8 +42,10 @@ Referencia original: handoff Notion "handoff-boa-wallet-pass" (decisiones sobre 
   - Header: logo BoA
   - Primary: ruta origen→destino con ícono de avión
   - Secondary: hora de salida (grande/prominente)
+  - Fila pasajero: nombre + número de viajero frecuente Elévate (si el pasajero lo tiene cargado; si no, se omite el campo en vez de mostrarlo vacío)
   - Auxiliary: grupo de abordaje / gate / asiento
   - Barcode: PDF417 al pie
+  - **Reverso (`backFields`, se ve al tocar el pase en Wallet):** código de reserva (`locator`, ya disponible como parámetro de la tool — no requiere scraping), secuencia de abordaje (sale del mismo BCBP decodificado que alimenta el barcode), nombre completo de los aeropuertos de origen/destino (complementa el código IATA del frente), y una nota de contacto fija de BoA. Deliberadamente NO incluye franquicia de equipaje, e-ticket ni terminal — ninguno aparece en la pantalla de check-in que ya scrapeamos, y no se van a inventar campos que queden vacíos o desactualizados.
 
 ### Config / secretos
 
