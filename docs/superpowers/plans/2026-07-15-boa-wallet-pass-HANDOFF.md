@@ -14,16 +14,17 @@ Referencias: spec `docs/superpowers/specs/2026-07-15-boa-wallet-pass-design.md`,
 - **Assets de marca**: `servers/boa-checkin/assets/boa-icon.png`/`@2x` (swoosh color) y `boa-logo.png`/`@2x` (logo completo blanco monocromo).
 - **Jano y Vesta wireados**: `generateBoaWalletPass` en allowedTools; tools `enviarDocumentoLocal` (el `.pkpass`) y `enviarFotoLocal` (la tarjeta `.png`, nueva) — ambas restringen `path` a `tmpdir()` + patrón `boa-wallet-*.{pkpass,png}` con `realpath()` (resuelve symlinks antes de validar).
 
-## Diseño final del `.pkpass` (cerrado 2026-07-17, tras iterar en vivo con Cal)
+## Diseño final del `.pkpass` (CERRADO 2026-07-17 — Cal: "Esa es!")
 
 - Estilo `boardingPass` (no `generic` — se probó, pero perdía el ícono de avión y el divisor perforado, que son features NATIVAS de `boardingPass`+`transitType`, confirmado con una captura real de un pase de LATAM).
-- Colores: `backgroundColor` navy `rgb(10,31,61)`, `foregroundColor` blanco `rgb(245,247,250)`, `labelColor` slate `rgb(138,151,179)` — el resto (logo, campos) sigue la estructura nativa de Wallet, que es la MISMA para cualquier aerolínea (esa parte no es personalizable, es una limitación real de Apple, no del código).
-- `headerFields`: número de vuelo + fecha (arriba, como un pase real de LATAM).
+- Colores: `backgroundColor` navy `rgb(10,31,61)`, `foregroundColor` blanco `rgb(245,247,250)`, `labelColor` slate `rgb(138,151,179)` — el resto (logo, campos) sigue la estructura nativa de Wallet, que es la MISMA para cualquier aerolínea (esa parte no es personalizable, es una limitación real de Apple, no del código). Estructura calcada de un pase REAL de BoA que Cal mandó como referencia.
+- **Todos los labels en INGLÉS** (no español) — Cal notó que en el pase real de BoA el nombre completo del pasajero no se corta porque los labels son más cortos en inglés (`NAME` vs `PASAJERO`, `SEAT` vs `ASIENTO`), liberando espacio de columna. Aplica a los 5 grupos de campos.
+- `headerFields`: `BOARDING TIME` — hora de abordaje + fecha en formato **DD/MM** (función `toDDMM()`, convierte "14 Jul"/"14 Jul 2026" → "14/07"; degrada con gracia si el texto no matchea).
 - `primaryFields`: origen/destino (códigos grandes, automático).
-- `secondaryFields`: salida + llegada (si `arrivalTime` está disponible — **no** alineadas bajo cada código como en LATAM: `passkit-generator@3.5.7` solo soporta `row` en pases `eventTicket`, tira error silencioso en `boardingPass`, confirmado probando).
-- `auxiliaryFields`: pasajero, abordaje, puerta, grupo, asiento.
-- `backFields`: código de reserva, secuencia, clase, aeropuertos completos, contacto, **Elévate** (movido de headerFields al reverso a pedido de Cal).
-- **Tarjeta `.png` decorativa** (`wallet-image.ts`, nueva): sigue el mockup HTML original aprobado (navy/dorado, avión rotado, perforado, "Pasajero"+"Elévate" en una fila) — es un archivo APARTE, no reemplaza el `.pkpass`, se manda con `enviarFotoLocal`. El barcode de la imagen es el mismo BCBP real (bwip-js, verificado round-trip). Aprobada por Cal ("hermoso").
+- `secondaryFields`: `FLIGHT` (número de vuelo), `DEPARTURE`, `GATE`.
+- `auxiliaryFields`: `NAME` (pasajero), `SEAT`, `GROUP`, `CLASS`.
+- `backFields`: `BOOKING REFERENCE`, `SEQUENCE`, `FROM`/`TO` (aeropuertos completos), `CONTACT`, `ARRIVAL` (si `arrivalTime` disponible), `FREQUENT FLYER` (Elévate — movido de headerFields al reverso).
+- **Tarjeta `.png` decorativa** (`wallet-image.ts`, nueva): sigue el mockup HTML original aprobado (navy/dorado, avión rotado, perforado, "Pasajero"+"Elévate" en una fila, labels en ESPAÑOL — es un diseño distinto y deliberadamente separado del `.pkpass` real, no se sincronizaron) — es un archivo APARTE, no reemplaza el `.pkpass`, se manda con `enviarFotoLocal`. El barcode de la imagen es el mismo BCBP real (bwip-js, verificado round-trip). Aprobada por Cal ("hermoso").
 
 ## Pendiente
 
