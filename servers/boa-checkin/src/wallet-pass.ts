@@ -48,10 +48,9 @@ export function loadWalletPassConfig(): WalletPassConfig {
 
 export interface WalletPassData {
   locator: string;
-  // passengerName, flightNumber, boardingTime, flightDate y travelClass NO
-  // los usa buildBoaPassFields todavía — están reservados para los campos
-  // top-level del pass.json (description/serialNumber/etc.) que va a
-  // necesitar el paso de firma de Task 7. No son campos muertos.
+  // boardingTime y flightDate no los usa buildBoaPassFields — quedan
+  // reservados para los campos top-level del pass.json (description/
+  // serialNumber/relevantDate) que arma signAndPackagePass.
   passengerName: string;
   frequentFlyerNumber?: string;
   flightNumber: string;
@@ -125,11 +124,16 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
     ],
-    secondaryFields: [{ key: "departure", label: "SALIDA", value: data.departureTime }],
-    auxiliaryFields: [
-      { key: "group", label: "GRUPO", value: data.boardingGroup },
+    secondaryFields: [
+      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
+      { key: "departure", label: "SALIDA", value: data.departureTime },
       { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
+    ],
+    auxiliaryFields: [
+      { key: "passenger", label: "PASAJERO", value: data.passengerName },
       { key: "seat", label: "ASIENTO", value: data.seat },
+      { key: "group", label: "GRUPO", value: data.boardingGroup },
+      { key: "class", label: "CLASE", value: data.travelClass },
     ],
     backFields: [
       { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
@@ -215,6 +219,13 @@ export async function signAndPackagePass(
       organizationName: "Boliviana de Aviación",
       description: `Boarding pass ${data.flightNumber} ${data.originCode}-${data.destinationCode}`,
       formatVersion: 1,
+      // Paleta navy/dorado aprobada por Cal (mockup 2026-07-15,
+      // https://claude.ai/code/artifact/9adb2360-3a2c-48c1-bb01-b500421d75a2).
+      // Sin esto Wallet usa blanco/negro por default — no hay fallback visual
+      // razonable a estos 3 valores, tienen que ir siempre.
+      backgroundColor: "rgb(10, 31, 61)", // --boa-navy-deep #0a1f3d
+      foregroundColor: "rgb(245, 247, 250)", // --boa-white #f5f7fa
+      labelColor: "rgb(138, 151, 179)", // --boa-slate #8a97b3
     },
   );
 

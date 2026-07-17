@@ -72,23 +72,26 @@ const sampleData: WalletPassData = {
 };
 
 describe("buildBoaPassFields", () => {
-  it("puts the route in primaryFields and departure time in secondaryFields", () => {
+  it("puts the route in primaryFields and flight/departure/gate in secondaryFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.primaryFields).toEqual([
       { key: "origin", label: "LA PAZ", value: "LPB" },
       { key: "destination", label: "SANTA CRUZ", value: "VVI" },
     ]);
     expect(fields.secondaryFields).toEqual([
+      { key: "flightNumber", label: "VUELO", value: "OB682" },
       { key: "departure", label: "SALIDA", value: "19:10" },
+      { key: "gate", label: "PUERTA", value: "—" },
     ]);
   });
 
-  it("puts group/gate/seat in auxiliaryFields, using a placeholder for missing gate", () => {
+  it("puts passenger/seat/group/class in auxiliaryFields, using a placeholder for missing gate", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.auxiliaryFields).toEqual([
-      { key: "group", label: "GRUPO", value: "2" },
-      { key: "gate", label: "PUERTA", value: "—" },
+      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
       { key: "seat", label: "ASIENTO", value: "25C" },
+      { key: "group", label: "GRUPO", value: "2" },
+      { key: "class", label: "CLASE", value: "Economy" },
     ]);
   });
 
