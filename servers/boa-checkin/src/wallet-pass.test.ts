@@ -61,6 +61,7 @@ const sampleData: WalletPassData = {
   destinationCode: "VVI",
   destinationName: "Viru Viru Intl., Santa Cruz",
   departureTime: "19:10",
+  arrivalTime: "23:10",
   boardingTime: "18:40",
   flightDate: "07 jul",
   seat: "25C",
@@ -72,26 +73,34 @@ const sampleData: WalletPassData = {
 };
 
 describe("buildBoaPassFields", () => {
-  it("puts the route in primaryFields and passenger/departure in secondaryFields", () => {
+  it("puts the route in primaryFields and departure/arrival in secondaryFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.primaryFields).toEqual([
       { key: "origin", label: "LA PAZ", value: "LPB" },
       { key: "destination", label: "SANTA CRUZ", value: "VVI" },
     ]);
     expect(fields.secondaryFields).toEqual([
-      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
+      { key: "departure", label: "SALIDA", value: "19:10" },
+      { key: "arrival", label: "LLEGADA", value: "23:10" },
+    ]);
+  });
+
+  it("omits the arrival field entirely when arrivalTime is missing", () => {
+    const fields = buildBoaPassFields({ ...sampleData, arrivalTime: undefined });
+    expect(fields.secondaryFields).toEqual([
       { key: "departure", label: "SALIDA", value: "19:10" },
     ]);
   });
 
-  it("puts flight/date/gate/seat/group in auxiliaryFields, using a placeholder for missing gate", () => {
+  it("puts passenger/flight-info/boarding/gate/group/seat in auxiliaryFields, using a placeholder for missing gate", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.auxiliaryFields).toEqual([
-      { key: "flightNumber", label: "VUELO", value: "OB682" },
-      { key: "flightDate", label: "FECHA", value: "07 jul" },
+      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
+      { key: "flightInfo", label: "VUELO", value: "OB682 · 07 jul" },
+      { key: "boarding", label: "ABORDAJE", value: "18:40" },
       { key: "gate", label: "PUERTA", value: "—" },
-      { key: "seat", label: "ASIENTO", value: "25C" },
       { key: "group", label: "GRUPO", value: "2" },
+      { key: "seat", label: "ASIENTO", value: "25C" },
     ]);
   });
 

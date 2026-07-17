@@ -455,6 +455,7 @@ export async function getWalletPassScrapeData(
   const gate = (rowText.match(/Gate\s*([A-Z0-9]+)/i) || [])[1];
   const travelClass = /business/i.test(rowText) ? "Business" : "Economy";
   const departureTime = (rowText.match(/Departure\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1] ?? "";
+  const arrivalTime = (rowText.match(/(?:Arrival|Landing)\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1];
   const boardingTime = (rowText.match(/Boarding\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1] ?? "";
   const flightDate = (rowText.match(/([0-9]{1,2}\s+[A-Za-z]{3}\b)/) || [])[1] ?? "";
   const frequentFlyerMatch = rowText.match(/Elevate\s*[:#]?\s*([A-Z0-9 ]{4,})/i);
@@ -469,6 +470,7 @@ export async function getWalletPassScrapeData(
     destinationCode,
     destinationName: destinationCode,
     departureTime,
+    arrivalTime,
     boardingTime,
     flightDate,
     seat,

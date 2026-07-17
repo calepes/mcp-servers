@@ -48,9 +48,6 @@ export function loadWalletPassConfig(): WalletPassConfig {
 
 export interface WalletPassData {
   locator: string;
-  // boardingTime y flightDate no los usa buildBoaPassFields — quedan
-  // reservados para los campos top-level del pass.json (description/
-  // serialNumber/relevantDate) que arma signAndPackagePass.
   passengerName: string;
   frequentFlyerNumber?: string;
   flightNumber: string;
@@ -59,6 +56,10 @@ export interface WalletPassData {
   destinationCode: string;
   destinationName: string;
   departureTime: string;
+  // Sin scraping confirmado todavía contra el DOM real de BoA (el check-in
+  // no siempre muestra la hora de llegada) — si falta, la fila 0 muestra
+  // solo la salida, sin la columna de llegada.
+  arrivalTime?: string;
   boardingTime: string;
   flightDate: string;
   seat: string;
@@ -71,7 +72,7 @@ export interface WalletPassData {
 
 interface PassField {
   key: string;
-  label: string;
+  label?: string;
   value: string;
 }
 
@@ -114,8 +115,24 @@ function shortAirportLabel(name: string): string {
  * Arma los grupos de campos del `pass.json` (tipo boardingPass) a partir de
  * los datos ya scrapeados del check-in — sin tocar certificados ni firmar
  * nada, para que sea testeable sin Chrome ni criptografía.
+ *
+ * Estructura basada en un pase REAL de Wallet (LATAM, captura de Cal
+ * 2026-07-17) — no en el mockup HTML original, que tenía elementos
+ * (gradiente, ícono de avión dorado, badges con borde, divisor perforado
+ * "a mano") imposibles en PassKit real. LATAM alinea salida/llegada justo
+ * debajo de cada código de aeropuerto usando `row: 0` en auxiliaryFields —
+ * `passkit-generator@3.5.7` (verificado también en el pre-release
+ * 3.6.0-alpha.1) solo permite `row` para pases tipo `eventTicket`, tira
+ * `ValidationError` en `boardingPass` y descarta el campo en silencio. Sin
+ * esa alineación posible, salida/llegada van en secondaryFields (visibles
+ * igual, solo sin la columna exacta bajo cada código).
  */
 export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
+  const secondaryFields: PassField[] = [{ key: "departure", label: "SALIDA", value: data.departureTime }];
+  if (data.arrivalTime) {
+    secondaryFields.push({ key: "arrival", label: "LLEGADA", value: data.arrivalTime });
+  }
+
   return {
     headerFields: data.frequentFlyerNumber
       ? [{ key: "frequentFlyer", label: "ELÉVATE", value: data.frequentFlyerNumber }]
@@ -124,21 +141,14 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
     ],
-    // Agrupamiento deliberadamente distinto al de un pase real de BoA (que
-    // pone VUELO/SALIDA/PUERTA en una fila y PASAJERO/ASIENTO/GRUPO/CLASE en
-    // otra) — pasajero+salida van juntos como bloque principal, y el resto
-    // de la logística de vuelo (número, fecha, puerta, asiento, grupo) va
-    // agrupada aparte. La clase de viaje pasa al reverso.
-    secondaryFields: [
-      { key: "passenger", label: "PASAJERO", value: data.passengerName },
-      { key: "departure", label: "SALIDA", value: data.departureTime },
-    ],
+    secondaryFields,
     auxiliaryFields: [
-      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
-      { key: "flightDate", label: "FECHA", value: data.flightDate },
+      { key: "passenger", label: "PASAJERO", value: data.passengerName },
+      { key: "flightInfo", label: "VUELO", value: `${data.flightNumber} · ${data.flightDate}` },
+      { key: "boarding", label: "ABORDAJE", value: data.boardingTime },
       { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
-      { key: "seat", label: "ASIENTO", value: data.seat },
       { key: "group", label: "GRUPO", value: data.boardingGroup },
+      { key: "seat", label: "ASIENTO", value: data.seat },
     ],
     backFields: [
       { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
@@ -183,14 +193,12 @@ function readCertFile(path: string, label: string): Buffer {
  *   posicionales, en ese orden (confirmado en `PKPass.d.ts` y en el ejemplo
  *   "Buffer Model" del README). `buffers` es `{}` porque las imágenes se
  *   agregan después vía `addBuffer`.
- * - `pass.type` es un setter real (no va en el constructor). Se usa
- *   `"generic"` en vez de `"boardingPass"` a pedido de Cal (2026-07-17):
- *   `boardingPass` fuerza el layout nativo de Apple (bloque gigante
- *   origen→avión→destino, igual en cualquier aerolínea) — con `generic`
- *   se pierde ese bloque automático pero se gana un layout de tarjeta
- *   más libre y menos "clon" del pase real de BoA. `transitType` NO se
- *   setea (solo es válido para `boardingPass`, tira error en cualquier
- *   otro tipo).
+ * - `pass.type`/`pass.transitType` son setters reales (no van en el
+ *   constructor). `boardingPass` + `PKTransitTypeAir` dan el ícono de avión
+ *   y el divisor perforado nativos — se probó `"generic"` primero (Cal
+ *   pidió diferenciarlo de BoA, 2026-07-17) pero perdía ambos; una captura
+ *   real de un pase de LATAM confirmó que son features del estilo
+ *   `boardingPass`, no algo exclusivo del layout de BoA — se revirtió.
  * - `headerFields`/`primaryFields`/etc. son GETTERS que devuelven un
  *   `FieldsArray` (subclase de `Array` con `push` real) — no hay setter,
  *   pero `.push(...)` sí muta el pass. Tal cual estaba en el plan.
@@ -241,7 +249,12 @@ export async function signAndPackagePass(
     },
   );
 
-  pass.type = "generic";
+  // boardingPass (no generic): confirmado con una captura real de un pase
+  // de LATAM (2026-07-17) que el ícono de avión y el divisor perforado son
+  // features NATIVAS de este estilo con transitType seteado — no hacía
+  // falta abandonarlo para lograr un layout distinto al de BoA.
+  pass.type = "boardingPass";
+  pass.transitType = "PKTransitTypeAir";
   pass.headerFields.push(...fields.headerFields);
   pass.primaryFields.push(...fields.primaryFields);
   pass.secondaryFields.push(...fields.secondaryFields);
@@ -251,6 +264,7 @@ export async function signAndPackagePass(
     format: "PKBarcodeFormatPDF417",
     message: data.barcodeMessage,
     messageEncoding: "iso-8859-1",
+    altText: `${data.flightNumber} · ${data.originCode} ${data.destinationCode} · ${data.seat}`,
   });
 
   pass.addBuffer("icon.png", assets.iconPng);
