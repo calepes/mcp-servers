@@ -124,20 +124,26 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
     ],
+    // Agrupamiento deliberadamente distinto al de un pase real de BoA (que
+    // pone VUELO/SALIDA/PUERTA en una fila y PASAJERO/ASIENTO/GRUPO/CLASE en
+    // otra) — pasajero+salida van juntos como bloque principal, y el resto
+    // de la logística de vuelo (número, fecha, puerta, asiento, grupo) va
+    // agrupada aparte. La clase de viaje pasa al reverso.
     secondaryFields: [
-      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
+      { key: "passenger", label: "PASAJERO", value: data.passengerName },
       { key: "departure", label: "SALIDA", value: data.departureTime },
-      { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
     ],
     auxiliaryFields: [
-      { key: "passenger", label: "PASAJERO", value: data.passengerName },
+      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
+      { key: "flightDate", label: "FECHA", value: data.flightDate },
+      { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
       { key: "seat", label: "ASIENTO", value: data.seat },
       { key: "group", label: "GRUPO", value: data.boardingGroup },
-      { key: "class", label: "CLASE", value: data.travelClass },
     ],
     backFields: [
       { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
       { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: data.boardingSequence ?? "—" },
+      { key: "class", label: "CLASE", value: data.travelClass },
       { key: "originFull", label: "ORIGEN", value: `${data.originName} (${data.originCode})` },
       { key: "destinationFull", label: "DESTINO", value: `${data.destinationName} (${data.destinationCode})` },
       { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },

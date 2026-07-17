@@ -72,26 +72,26 @@ const sampleData: WalletPassData = {
 };
 
 describe("buildBoaPassFields", () => {
-  it("puts the route in primaryFields and flight/departure/gate in secondaryFields", () => {
+  it("puts the route in primaryFields and passenger/departure in secondaryFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.primaryFields).toEqual([
       { key: "origin", label: "LA PAZ", value: "LPB" },
       { key: "destination", label: "SANTA CRUZ", value: "VVI" },
     ]);
     expect(fields.secondaryFields).toEqual([
-      { key: "flightNumber", label: "VUELO", value: "OB682" },
+      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
       { key: "departure", label: "SALIDA", value: "19:10" },
-      { key: "gate", label: "PUERTA", value: "—" },
     ]);
   });
 
-  it("puts passenger/seat/group/class in auxiliaryFields, using a placeholder for missing gate", () => {
+  it("puts flight/date/gate/seat/group in auxiliaryFields, using a placeholder for missing gate", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.auxiliaryFields).toEqual([
-      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
+      { key: "flightNumber", label: "VUELO", value: "OB682" },
+      { key: "flightDate", label: "FECHA", value: "07 jul" },
+      { key: "gate", label: "PUERTA", value: "—" },
       { key: "seat", label: "ASIENTO", value: "25C" },
       { key: "group", label: "GRUPO", value: "2" },
-      { key: "class", label: "CLASE", value: "Economy" },
     ]);
   });
 
@@ -112,6 +112,7 @@ describe("buildBoaPassFields", () => {
     expect(fields.backFields).toEqual([
       { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
       { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "014" },
+      { key: "class", label: "CLASE", value: "Economy" },
       { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
       { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
       {
@@ -135,6 +136,7 @@ describe("buildBoaPassFields", () => {
     expect(fields.backFields).toEqual([
       { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
       { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "—" },
+      { key: "class", label: "CLASE", value: "Economy" },
       { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
       { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
       {
