@@ -24,6 +24,14 @@ function median(values: number[]): number {
   return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+// Parse de números bolivianos: coma decimal, punto de miles ("4.068,29" -> 4068.29)
+function parseBolNum(s: string): number {
+  const t = s.trim();
+  return t.includes(',')
+    ? parseFloat(t.replace(/\./g, '').replace(',', '.'))
+    : parseFloat(t);
+}
+
 async function fetchBcbRate() {
   const cached = getCached<unknown>('bcb');
   if (cached) return { ...(cached as object), cached: true };
@@ -38,16 +46,17 @@ async function fetchBcbRate() {
   if (!res.ok) throw new Error(`BCB fetch failed: ${res.status}`);
   const htmlRaw = await res.text();
   const html = htmlRaw.replace(/\s+/g, ' ');
-  const block = html.match(/Valor referencial del d[oó]lar estadounidense(.*?)<\/article>/i);
-  if (!block) throw new Error('BCB: bloque "Valor referencial" no encontrado en el HTML');
-  const vals = block[1].match(/bcb-val">\s*(\d+[.,]\d+)/g);
-  if (!vals || vals.length < 2) throw new Error('BCB: no se extrajeron compra/venta del bloque');
-  const parseNum = (s: string): number => {
-    const m = s.match(/(\d+[.,]\d+)/);
-    if (!m) throw new Error(`BCB: parse num failed: ${s}`);
-    return parseFloat(m[1].replace(',', '.'));
-  };
-  const result = { source: 'BCB', compra: parseNum(vals[0]), venta: parseNum(vals[1]), fetchedAt: new Date().toISOString(), cached: false };
+  // El BCB rediseñó la portada (jun 2026): unificó el mercado cambiario y ahora
+  // publica un ÚNICO "Tipo de cambio oficial" en .bcb-kpi2-card.is-tc-oficial
+  // (clase .bcb-tco-num), en vez del par compra/venta anterior (clase .bcb-val).
+  const card = html.match(/is-tc-oficial(.*?)<\/article>/i);
+  const scope = card ? card[1] : html; // fallback: si cambia el contenedor, busca en todo el doc
+  const numMatch = scope.match(/bcb-tco-num"[^>]*>\s*([\d.,]+)/i);
+  if (!numMatch) throw new Error("BCB: no se encontró 'bcb-tco-num' (¿cambió de nuevo el HTML del BCB?)");
+  const oficial = parseBolNum(numMatch[1]);
+  if (isNaN(oficial)) throw new Error(`BCB: valor no parseable: ${numMatch[1]}`);
+  const fechaMatch = scope.match(/datetime="(\d{4}-\d{2}-\d{2})"/i);
+  const result = { source: 'BCB', oficial, fecha: fechaMatch ? fechaMatch[1] : null, fetchedAt: new Date().toISOString(), cached: false };
   setCached('bcb', result);
   return result;
 }

@@ -22,10 +22,18 @@ const OUTLIER_THRESHOLD = 0.03;
 
 interface BcbResult {
   source: "BCB";
-  compra: number;
-  venta: number;
+  oficial: number; // tipo de cambio oficial único Bs/USD (el BCB unificó compra/venta)
+  fecha: string | null; // fecha de la cotización (ISO yyyy-mm-dd) según el BCB
   fetchedAt: string;
   cached: boolean;
+}
+
+// Parse de números bolivianos: coma decimal, punto de miles ("4.068,29" -> 4068.29)
+function parseBolNum(s: string): number {
+  const t = s.trim();
+  return t.includes(",")
+    ? parseFloat(t.replace(/\./g, "").replace(",", "."))
+    : parseFloat(t);
 }
 
 interface BinanceP2PResult {
@@ -80,25 +88,25 @@ async function fetchBcbRate(): Promise<BcbResult> {
   const htmlRaw = await res.text();
   const html = htmlRaw.replace(/\s+/g, " ");
 
-  const block = html.match(
-    /Valor referencial del d[oó]lar estadounidense(.*?)<\/article>/i,
-  );
-  if (!block) throw new Error("BCB: bloque 'Valor referencial' no encontrado en el HTML");
+  // El BCB rediseñó la portada (jun 2026): unificó el mercado cambiario y ahora
+  // publica un ÚNICO "Tipo de cambio oficial" en la card .bcb-kpi2-card.is-tc-oficial
+  // (clase .bcb-tco-num), en vez del par compra/venta anterior (clase .bcb-val).
+  const card = html.match(/is-tc-oficial(.*?)<\/article>/i);
+  const scope = card ? card[1] : html; // fallback: si cambia el contenedor, busca en todo el doc
 
-  const vals = block[1].match(/bcb-val">\s*(\d+[.,]\d+)/g);
-  if (!vals || vals.length < 2) {
-    throw new Error("BCB: no se extrajeron compra/venta del bloque");
+  const numMatch = scope.match(/bcb-tco-num"[^>]*>\s*([\d.,]+)/i);
+  if (!numMatch) {
+    throw new Error("BCB: no se encontró 'bcb-tco-num' (¿cambió de nuevo el HTML del BCB?)");
   }
-  const parseNum = (s: string): number => {
-    const m = s.match(/(\d+[.,]\d+)/);
-    if (!m) throw new Error(`BCB: parse num failed: ${s}`);
-    return parseFloat(m[1].replace(",", "."));
-  };
+  const oficial = parseBolNum(numMatch[1]);
+  if (isNaN(oficial)) throw new Error(`BCB: valor no parseable: ${numMatch[1]}`);
+
+  const fechaMatch = scope.match(/datetime="(\d{4}-\d{2}-\d{2})"/i);
 
   const result: BcbResult = {
     source: "BCB",
-    compra: parseNum(vals[0]),
-    venta: parseNum(vals[1]),
+    oficial,
+    fecha: fechaMatch ? fechaMatch[1] : null,
     fetchedAt: new Date().toISOString(),
     cached: false,
   };
@@ -175,7 +183,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "getBcbRate",
       description:
-        "Tipo de cambio oficial del Banco Central de Bolivia (Bs por USD). Scrape de bcb.gob.bo. Devuelve { source, compra, venta, fetchedAt, cached }. Cache de 60s. Usar para: tipo de cambio oficial, valor BCB, dólar oficial Bolivia.",
+        "Tipo de cambio oficial del Banco Central de Bolivia (Bs por USD). Scrape de bcb.gob.bo. Desde la unificación cambiaria (jun 2026) el BCB publica un ÚNICO valor oficial (ya no compra/venta). Devuelve { source, oficial, fecha, fetchedAt, cached }. Cache de 60s. Usar para: tipo de cambio oficial, valor BCB, dólar oficial Bolivia.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       annotations: READ_ONLY.annotations,
     },
