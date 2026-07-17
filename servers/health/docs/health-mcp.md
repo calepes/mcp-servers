@@ -25,7 +25,7 @@ mcpServers: {
   }
 }
 ```
-Y agregar a `allowedTools`: `"mcp__health__getHealthSummary"`, `"mcp__health__getHealthTrend"`, `"mcp__health__getWorkouts"`.
+Y agregar a `allowedTools`: `"mcp__health__getHealthSummary"`, `"mcp__health__getHealthTrend"`, `"mcp__health__getWorkouts"`, `"mcp__health__getHealthSyncStatus"`.
 
 ## Tools disponibles
 
@@ -61,6 +61,14 @@ Respuesta:
     { "type": "Tennis", "date": "2026-04-28", "duration_min": 55, "energy_kcal": 1731, "hr_avg": 137, "hr_max": 156, "category": "cardio" }
   ]
 }
+```
+
+### `getHealthSyncStatus`
+Hace cuánto llegó el último `/ingest` de Health Auto Export (timestamp del servidor, no de la métrica). Detecta cortes silenciosos de sync (ej. Background App Refresh desactivado, Low Power Mode).
+
+Sin args. Respuesta:
+```json
+{ "lastIngestAt": "2026-07-15T18:03:22.104Z", "hoursSinceLastIngest": 1.4, "lastMetricsCount": 42, "lastWorkoutsCount": 0 }
 ```
 
 ## Build

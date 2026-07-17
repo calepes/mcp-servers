@@ -107,6 +107,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
       ...READ_ONLY,
     },
+    {
+      name: "getHealthSyncStatus",
+      description:
+        "Última vez que llegó data de Health Auto Export al worker (timestamp del servidor, no de la métrica). Útil para detectar cortes silenciosos de sincronización — ej. si Cal pregunta 'está sincronizando bien mi salud' o 'hace cuánto no llega data del Watch'. Sin args.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      ...READ_ONLY,
+    },
   ],
 }));
 
@@ -140,6 +147,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (cursor != null) params.set("cursor", String(cursor));
       const qs = params.toString();
       data = await fetchHealth(`/measurements${qs ? `?${qs}` : ""}`);
+    } else if (name === "getHealthSyncStatus") {
+      data = await fetchHealth(`/status`);
     } else {
       return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
     }
