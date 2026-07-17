@@ -76,14 +76,14 @@ describe("buildBoaPassFields", () => {
   it("puts boarding time + flight date (converted to DD/MM) combined in headerFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.headerFields).toEqual([
-      { key: "boarding", label: "ABORDAJE", value: "18:40 07/07" },
+      { key: "boarding", label: "BOARDING TIME", value: "18:40 07/07" },
     ]);
   });
 
   it("keeps the flight date as-is in headerFields when it doesn't match the expected 'DD Mon' shape", () => {
     const fields = buildBoaPassFields({ ...sampleData, flightDate: "unparseable" });
     expect(fields.headerFields).toEqual([
-      { key: "boarding", label: "ABORDAJE", value: "18:40 unparseable" },
+      { key: "boarding", label: "BOARDING TIME", value: "18:40 unparseable" },
     ]);
   });
 
@@ -98,36 +98,36 @@ describe("buildBoaPassFields", () => {
   it("puts flight/departure/gate in secondaryFields, using a placeholder for missing gate", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.secondaryFields).toEqual([
-      { key: "flightNumber", label: "VUELO", value: "OB682" },
-      { key: "departure", label: "SALIDA", value: "19:10" },
-      { key: "gate", label: "PUERTA", value: "—" },
+      { key: "flightNumber", label: "FLIGHT", value: "OB682" },
+      { key: "departure", label: "DEPARTURE", value: "19:10" },
+      { key: "gate", label: "GATE", value: "—" },
     ]);
   });
 
   it("puts passenger/seat/group/class in auxiliaryFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.auxiliaryFields).toEqual([
-      { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
-      { key: "seat", label: "ASIENTO", value: "25C" },
-      { key: "group", label: "GRUPO", value: "2" },
-      { key: "class", label: "CLASE", value: "Economy" },
+      { key: "passenger", label: "NAME", value: "Carlos Lepesqueur" },
+      { key: "seat", label: "SEAT", value: "25C" },
+      { key: "group", label: "GROUP", value: "2" },
+      { key: "class", label: "CLASS", value: "Economy" },
     ]);
   });
 
   it("fills backFields with locator, sequence, full airport names, arrival and frequent flyer number", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.backFields).toEqual([
-      { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
-      { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "014" },
-      { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
-      { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
+      { key: "locator", label: "BOOKING REFERENCE", value: "XK9F2P" },
+      { key: "sequence", label: "SEQUENCE", value: "014" },
+      { key: "originFull", label: "FROM", value: "La Paz — El Alto Intl. (LPB)" },
+      { key: "destinationFull", label: "TO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
       {
         key: "contact",
-        label: "CONTACTO",
-        value: "Boliviana de Aviación · consultas: boa.bo",
+        label: "CONTACT",
+        value: "Boliviana de Aviación · boa.bo",
       },
-      { key: "arrival", label: "LLEGADA", value: "23:10" },
-      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
+      { key: "arrival", label: "ARRIVAL", value: "23:10" },
+      { key: "frequentFlyer", label: "FREQUENT FLYER", value: "EL 048213" },
     ]);
   });
 
@@ -152,17 +152,17 @@ describe("buildBoaPassFields", () => {
   it("falls back to a placeholder in backFields when boardingSequence is missing", () => {
     const fields = buildBoaPassFields({ ...sampleData, boardingSequence: undefined });
     expect(fields.backFields).toEqual([
-      { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
-      { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: "—" },
-      { key: "originFull", label: "ORIGEN", value: "La Paz — El Alto Intl. (LPB)" },
-      { key: "destinationFull", label: "DESTINO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
+      { key: "locator", label: "BOOKING REFERENCE", value: "XK9F2P" },
+      { key: "sequence", label: "SEQUENCE", value: "—" },
+      { key: "originFull", label: "FROM", value: "La Paz — El Alto Intl. (LPB)" },
+      { key: "destinationFull", label: "TO", value: "Viru Viru Intl., Santa Cruz (VVI)" },
       {
         key: "contact",
-        label: "CONTACTO",
-        value: "Boliviana de Aviación · consultas: boa.bo",
+        label: "CONTACT",
+        value: "Boliviana de Aviación · boa.bo",
       },
-      { key: "arrival", label: "LLEGADA", value: "23:10" },
-      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
+      { key: "arrival", label: "ARRIVAL", value: "23:10" },
+      { key: "frequentFlyer", label: "FREQUENT FLYER", value: "EL 048213" },
     ]);
   });
 });

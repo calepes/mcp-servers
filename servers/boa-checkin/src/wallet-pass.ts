@@ -158,36 +158,40 @@ function toDDMM(flightDate: string): string {
  * alineada exactamente bajo cada código de aeropuerto.
  */
 export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
+  // Labels en inglés (no español) — a pedido de Cal (2026-07-17): son más
+  // cortos ("NAME" vs "PASAJERO", "SEAT" vs "ASIENTO"), lo que le da más
+  // espacio de columna a valores largos como el nombre completo del
+  // pasajero. Mismo criterio que un pase real de BoA/LATAM (100% en inglés).
   const backFields: PassField[] = [
-    { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
-    { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: data.boardingSequence ?? "—" },
-    { key: "originFull", label: "ORIGEN", value: `${data.originName} (${data.originCode})` },
-    { key: "destinationFull", label: "DESTINO", value: `${data.destinationName} (${data.destinationCode})` },
-    { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },
+    { key: "locator", label: "BOOKING REFERENCE", value: data.locator },
+    { key: "sequence", label: "SEQUENCE", value: data.boardingSequence ?? "—" },
+    { key: "originFull", label: "FROM", value: `${data.originName} (${data.originCode})` },
+    { key: "destinationFull", label: "TO", value: `${data.destinationName} (${data.destinationCode})` },
+    { key: "contact", label: "CONTACT", value: "Boliviana de Aviación · boa.bo" },
   ];
   if (data.arrivalTime) {
-    backFields.push({ key: "arrival", label: "LLEGADA", value: data.arrivalTime });
+    backFields.push({ key: "arrival", label: "ARRIVAL", value: data.arrivalTime });
   }
   if (data.frequentFlyerNumber) {
-    backFields.push({ key: "frequentFlyer", label: "ELÉVATE", value: data.frequentFlyerNumber });
+    backFields.push({ key: "frequentFlyer", label: "FREQUENT FLYER", value: data.frequentFlyerNumber });
   }
 
   return {
-    headerFields: [{ key: "boarding", label: "ABORDAJE", value: `${data.boardingTime} ${toDDMM(data.flightDate)}` }],
+    headerFields: [{ key: "boarding", label: "BOARDING TIME", value: `${data.boardingTime} ${toDDMM(data.flightDate)}` }],
     primaryFields: [
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
     ],
     secondaryFields: [
-      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
-      { key: "departure", label: "SALIDA", value: data.departureTime },
-      { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
+      { key: "flightNumber", label: "FLIGHT", value: data.flightNumber },
+      { key: "departure", label: "DEPARTURE", value: data.departureTime },
+      { key: "gate", label: "GATE", value: data.gate ?? "—" },
     ],
     auxiliaryFields: [
-      { key: "passenger", label: "PASAJERO", value: data.passengerName },
-      { key: "seat", label: "ASIENTO", value: data.seat },
-      { key: "group", label: "GRUPO", value: data.boardingGroup },
-      { key: "class", label: "CLASE", value: data.travelClass },
+      { key: "passenger", label: "NAME", value: data.passengerName },
+      { key: "seat", label: "SEAT", value: data.seat },
+      { key: "group", label: "GROUP", value: data.boardingGroup },
+      { key: "class", label: "CLASS", value: data.travelClass },
     ],
     backFields,
   };
