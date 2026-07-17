@@ -1,33 +1,46 @@
 # Handoff — BoA Wallet Pass (.pkpass)
 
-**Fecha:** 2026-07-16. **Para retomar en sesión fresca.**
+**Última actualización:** 2026-07-17. **Para retomar en sesión fresca.**
 
-## Estado: código 100% listo. Bloqueado solo en insumos de Cal (Apple Developer).
+## Estado: certificado activo, diseño cerrado, probado con un PDF real. Solo falta el scraping en vivo (Task 13).
 
 Referencias: spec `docs/superpowers/specs/2026-07-15-boa-wallet-pass-design.md`, plan `docs/superpowers/plans/2026-07-15-boa-wallet-pass.md` (13 tasks, ejecutado vía subagent-driven-development).
 
-## Completo (Tasks 2–10, 12; commits en `mcp-servers` salvo aclaración)
+## Completo (Tasks 1–12 + fixes posteriores; commits en `mcp-servers` salvo aclaración)
 
-- **Pipeline completo del MCP `boa-checkin`**: `wallet-pdf417.ts` (render PDF→píxeles + decode PDF417 vía pdfjs-dist/@napi-rs/canvas/zxing-wasm), `wallet-pass.ts` (config loader, `buildBoaPassFields`, `signAndPackagePass` con passkit-generator — API verificada contra el paquete instalado, no adivinada), scraping en `flow.ts` (`getWalletPassScrapeData`, **sin validar contra una reserva real todavía** — regexes best-effort, marcado explícito en el código), y el tool `generateBoaWalletPass` wireado en `index.ts`.
-- **Assets de marca aprobados y commiteados** (`b6435ad`): `servers/boa-checkin/assets/boa-icon.png`/`@2x` (swoosh en color, para notificaciones) y `boa-logo.png`/`@2x` (logo completo BoA en monocromo blanco, para mostrarse directo sobre el navy de la tarjeta sin marco — diseño final aprobado por Cal).
-- **Jano y Vesta wireados** (`16fd99e`/`33dc19f` + fix `d320728`/`14a502c`): tool `generateBoaWalletPass` en allowedTools, nueva tool `enviarDocumentoLocal` (sube un archivo LOCAL a Telegram vía multipart — `enviarDocumentoUrl` solo sirve para URLs públicas). **Fix de seguridad aplicado**: `enviarDocumentoLocal` restringe el `path` a `tmpdir()` + patrón `boa-wallet-*.pkpass` (hallazgo bloqueante de `daemon-health-reviewer`: sin esa validación, el path venía sin restricción del LLM → lectura+exfiltración arbitraria de archivos locales vía Telegram ante un prompt-injection).
-- **Bonus**: de paso se encontró y commiteó ~3 sesiones de trabajo previo sin commitear (multi-tramo de boa-checkin, auditoría de seguridad de Jano 14-15/jul con remoción de `runBriefing`, wiring espejo en Vesta) — todo verificado con build+test antes de commitear.
-- **Mockup visual aprobado**: https://claude.ai/code/artifact/9adb2360-3a2c-48c1-bb01-b500421d75a2 (navy/dorado, logo BoA completo en blanco sin marco, avión apuntando al destino, reverso con tap-to-flip, número de Elévate real de Cal: **1004032503**, fuente `~/.claude/datos-viaje.md` línea 45).
+- **Certificado de Apple Developer activo** (2026-07-17): `~/.claude/secrets/boa-wallet/signerCert.pem`/`signerKey.pem` (chmod 600, NO en el repo), WWDR público commiteado en `servers/boa-checkin/assets/AppleWWDRCAG4.pem`. `apps.env` completo con `BOA_WALLET_PASS_TYPE_ID=pass.net.lepesqueur.boa-checkin`, `BOA_WALLET_TEAM_ID=Y789G689GY` + el resto de las keys.
+- **Pipeline completo del MCP `boa-checkin`**: `wallet-pdf417.ts` (decode PDF417 real, verificado round-trip 100%), `wallet-pass.ts` (`buildBoaPassFields`/`signAndPackagePass` — estilo `boardingPass` + `PKTransitTypeAir`, NO `generic` — ver gotchas abajo), `wallet-image.ts` (nuevo — genera la tarjeta `.png` decorativa), scraping en `flow.ts` (`getWalletPassScrapeData`, **aún sin validar contra una reserva real** — regexes best-effort), tool `generateBoaWalletPass` en `index.ts` (devuelve `{ pasajero, pkpassPath, cardImagePath }`).
+- **Probado end-to-end con un PDF real** (2026-07-17, sin pasar por scraping en vivo): boarding pass real de Cal (OB688, LPB→VVI) → barcode PDF417 decodificado del PDF oficial → `.pkpass` firmado real → abierto en Wallet de iPhone. Iteración de diseño en vivo con Cal hasta cerrar el layout final (ver "Diseño final" abajo).
+- **Assets de marca**: `servers/boa-checkin/assets/boa-icon.png`/`@2x` (swoosh color) y `boa-logo.png`/`@2x` (logo completo blanco monocromo).
+- **Jano y Vesta wireados**: `generateBoaWalletPass` en allowedTools; tools `enviarDocumentoLocal` (el `.pkpass`) y `enviarFotoLocal` (la tarjeta `.png`, nueva) — ambas restringen `path` a `tmpdir()` + patrón `boa-wallet-*.{pkpass,png}` con `realpath()` (resuelve symlinks antes de validar).
 
-## Pendiente — bloqueado por insumos de Cal
+## Diseño final del `.pkpass` (cerrado 2026-07-17, tras iterar en vivo con Cal)
 
-- **Task 1 — Certificado Apple**: **BLOQUEADO 2026-07-16 — membresía de Apple Developer de Cal estaba vencida, la acaba de renovar.** Esperando que quede activa (puede tardar unas horas) antes de poder crear el Pass Type ID. Guía paso a paso ya entregada a Cal (crear Pass Type ID → CSR en Keychain Access → subir CSR al portal → descargar cert → exportar `.p12` con contraseña → anotar Team ID). Una vez activa la membresía: retomar desde ahí, después extraer PEM cert+key con `openssl` (comandos exactos en el plan, Task 1) a `~/.claude/secrets/boa-wallet/` (chmod 600, **NO va al repo** — solo el WWDR público de Apple sí se commitea).
-- **Task 11 — `apps.env`**: agregar `BOA_WALLET_PASS_TYPE_ID`, `BOA_WALLET_TEAM_ID`, `BOA_WALLET_SIGNER_CERT_PATH`, `BOA_WALLET_SIGNER_KEY_PATH`, `BOA_WALLET_SIGNER_KEY_PASSPHRASE`, `BOA_WALLET_WWDR_PATH` — depende de Task 1.
-- **Task 13 — Verificación E2E manual**: generar el pase de un vuelo real de Cal, abrirlo en Safari/Wallet, comparar el barcode contra el PDF oficial. Acá también es donde hay que validar (y probablemente ajustar) los regexes de `getWalletPassScrapeData` contra el DOM real de BoA — no se pudo hacer antes por falta de una reserva confirmada durante la sesión.
+- Estilo `boardingPass` (no `generic` — se probó, pero perdía el ícono de avión y el divisor perforado, que son features NATIVAS de `boardingPass`+`transitType`, confirmado con una captura real de un pase de LATAM).
+- Colores: `backgroundColor` navy `rgb(10,31,61)`, `foregroundColor` blanco `rgb(245,247,250)`, `labelColor` slate `rgb(138,151,179)` — el resto (logo, campos) sigue la estructura nativa de Wallet, que es la MISMA para cualquier aerolínea (esa parte no es personalizable, es una limitación real de Apple, no del código).
+- `headerFields`: número de vuelo + fecha (arriba, como un pase real de LATAM).
+- `primaryFields`: origen/destino (códigos grandes, automático).
+- `secondaryFields`: salida + llegada (si `arrivalTime` está disponible — **no** alineadas bajo cada código como en LATAM: `passkit-generator@3.5.7` solo soporta `row` en pases `eventTicket`, tira error silencioso en `boardingPass`, confirmado probando).
+- `auxiliaryFields`: pasajero, abordaje, puerta, grupo, asiento.
+- `backFields`: código de reserva, secuencia, clase, aeropuertos completos, contacto, **Elévate** (movido de headerFields al reverso a pedido de Cal).
+- **Tarjeta `.png` decorativa** (`wallet-image.ts`, nueva): sigue el mockup HTML original aprobado (navy/dorado, avión rotado, perforado, "Pasajero"+"Elévate" en una fila) — es un archivo APARTE, no reemplaza el `.pkpass`, se manda con `enviarFotoLocal`. El barcode de la imagen es el mismo BCBP real (bwip-js, verificado round-trip). Aprobada por Cal ("hermoso").
+
+## Pendiente
+
+- **Task 13 — Verificación E2E completa**: falta correr el flujo con una reserva real de BoA (`prepareBoaCheckin`→`confirmBoaCheckin`→`generateBoaWalletPass`), no solo con un PDF suelto — eso valida (y probablemente ajusta) los regexes de `getWalletPassScrapeData` contra el DOM real del check-in de BoA. Cal tiene un vuelo el martes (próximo, revisar fecha exacta con él) — ahí se puede probar.
 
 ## Primer paso al retomar
 
-1. Preguntarle a Cal si su membresía de Apple Developer ya quedó activa (la renovó el 2026-07-16, estaba vencida) y si ya tiene el Pass Type ID + `.p12` generados (guía paso a paso ya entregada, ver arriba).
-2. Si sí → ejecutar Task 1 (extracción openssl) → Task 11 (apps.env) → rebuild+restart de Jano o Vesta (con Cal presente, nunca autónomo) → Task 13 con una reserva real.
-3. Si no → nada que hacer del lado de código; el pipeline entero ya compila y pasa tests (22/22 en `boa-checkin`, 71/71 Jano, 36/36 Vesta).
+1. Preguntarle a Cal si ya hizo el check-in del vuelo del martes (o el que tenga próximo).
+2. Pedir locator + apellido, correr `prepareBoaCheckin` → `confirmBoaCheckin` → `generateBoaWalletPass` real (no el script de prueba con PDF suelto).
+3. Si `getWalletPassScrapeData` falla o trae datos raros: loguear `rowText` (ya tiene un comentario explícito en el código para esto) y ajustar los regex al texto real del DOM.
+4. Confirmar con Cal que el `.pkpass` + la tarjeta llegan bien por Telegram y se ven como espera.
 
 ## Gotchas para la próxima sesión
 
-- `enviarDocumentoLocal` es nueva en Jano/Vesta — solo acepta paths `boa-wallet-*.pkpass` dentro de `tmpdir()`, por diseño (seguridad). No aflojar esa validación sin pensarlo dos veces.
+- **`passkit-generator@3.5.7` (y el pre-release 3.6.0-alpha.1) solo permite `row` en `auxiliaryFields` para pases tipo `eventTicket`** — en `boardingPass` tira `ValidationError` y descarta el campo EN SILENCIO (no rompe el pase, simplemente el campo no aparece). Si en el futuro se quiere alinear salida/llegada bajo cada código de aeropuerto (como LATAM), habría que migrar a `eventTicket` o esperar una versión que lo soporte — no intentar `row` en `boardingPass` de nuevo sin verificar la versión instalada primero.
+- **Telegram `sendPhoto` recomprime a JPEG y pierde transparencia** — por eso `enviarFotoLocal` usa `sendDocument`, no `sendPhoto`. Si se agrega algún otro envío de imagen con transparencia (esquinas redondeadas, etc.), aplicar el mismo criterio.
+- **`enviarDocumentoLocal`/`enviarFotoLocal` resuelven symlinks con `realpath()`** antes de validar el path (hardening agregado 2026-07-17, hallazgo de `daemon-health-reviewer`) — no simplificar de vuelta a solo `resolve()`.
 - El certificado de firma (`signerKey.pem`) NUNCA debe terminar en el repo git — solo en `~/.claude/secrets/boa-wallet/`.
-- Los regexes de `getWalletPassScrapeData` (flow.ts) son un placeholder razonado, no probado — primera vez que se corra contra una reserva real, esperar tener que ajustar (`console.log(rowText)` y mirar el texto real).
+- Los regexes de `getWalletPassScrapeData` (flow.ts) siguen sin validar contra el DOM real — primera vez que se corra contra una reserva real, esperar tener que ajustar.
+- Playwright (para `wallet-image.ts`) ya era dependencia de `boa-checkin` (se usa también para el check-in real) — no hace falta instalar nada nuevo. `bwip-js` pasó de devDependency a dependency (ahora se usa en runtime, no solo en tests).

@@ -111,59 +111,83 @@ function shortAirportLabel(name: string): string {
   return name.trim().toUpperCase();
 }
 
+const MONTH_TO_NUMBER: Record<string, string> = {
+  ene: "01", jan: "01",
+  feb: "02",
+  mar: "03",
+  abr: "04", apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  ago: "08", aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dic: "12", dec: "12",
+};
+
+/**
+ * Convierte una fecha tipo "14 Jul" / "14 Jul 2026" (formato que devuelve el
+ * scraping de BoA) a "14/07" (DD/MM) — a pedido de Cal (2026-07-17), que
+ * quiere el mismo formato que un pase real de BoA/LATAM. Si el texto no
+ * matchea el patrón esperado, lo devuelve tal cual en vez de romper — nunca
+ * vimos el DOM real de BoA todavía (ver gotchas de flow.ts), así que más
+ * vale degradar con gracia que asumir un formato que puede no aplicar.
+ */
+function toDDMM(flightDate: string): string {
+  const match = flightDate.match(/(\d{1,2})\s+([A-Za-zÀ-ÿ]{3,})/);
+  if (!match) return flightDate;
+  const day = match[1].padStart(2, "0");
+  const month = MONTH_TO_NUMBER[match[2].slice(0, 3).toLowerCase()];
+  return month ? `${day}/${month}` : flightDate;
+}
+
 /**
  * Arma los grupos de campos del `pass.json` (tipo boardingPass) a partir de
  * los datos ya scrapeados del check-in — sin tocar certificados ni firmar
  * nada, para que sea testeable sin Chrome ni criptografía.
  *
- * Estructura basada en un pase REAL de Wallet (LATAM, captura de Cal
- * 2026-07-17) — no en el mockup HTML original, que tenía elementos
- * (gradiente, ícono de avión dorado, badges con borde, divisor perforado
- * "a mano") imposibles en PassKit real. LATAM alinea salida/llegada justo
- * debajo de cada código de aeropuerto usando `row: 0` en auxiliaryFields —
- * `passkit-generator@3.5.7` (verificado también en el pre-release
- * 3.6.0-alpha.1) solo permite `row` para pases tipo `eventTicket`, tira
- * `ValidationError` en `boardingPass` y descarta el campo en silencio. Sin
- * esa alineación posible, salida/llegada van en secondaryFields (visibles
- * igual, solo sin la columna exacta bajo cada código).
+ * Estructura final pedida por Cal (2026-07-17), calcando la de un pase REAL
+ * de BoA que mandó como referencia (BOARDING TIME arriba; FLIGHT/DEPARTURE/
+ * GATE en una fila; NAME/SEAT/GROUP/CLASS en la otra) — con el navy/blanco
+ * aprobado en vez del blanco/navy-texto original de BoA. `passkit-
+ * generator@3.5.7` (verificado también en el pre-release 3.6.0-alpha.1) solo
+ * permite alinear campos bajo primaryFields (`row`) para pases tipo
+ * `eventTicket`, tira `ValidationError` en `boardingPass` y descarta el
+ * campo en silencio — por eso esta fila va en secondaryFields en vez de
+ * alineada exactamente bajo cada código de aeropuerto.
  */
 export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
-  const secondaryFields: PassField[] = [{ key: "departure", label: "SALIDA", value: data.departureTime }];
-  if (data.arrivalTime) {
-    secondaryFields.push({ key: "arrival", label: "LLEGADA", value: data.arrivalTime });
-  }
-
   const backFields: PassField[] = [
     { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
     { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: data.boardingSequence ?? "—" },
-    { key: "class", label: "CLASE", value: data.travelClass },
     { key: "originFull", label: "ORIGEN", value: `${data.originName} (${data.originCode})` },
     { key: "destinationFull", label: "DESTINO", value: `${data.destinationName} (${data.destinationCode})` },
     { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },
   ];
+  if (data.arrivalTime) {
+    backFields.push({ key: "arrival", label: "LLEGADA", value: data.arrivalTime });
+  }
   if (data.frequentFlyerNumber) {
     backFields.push({ key: "frequentFlyer", label: "ELÉVATE", value: data.frequentFlyerNumber });
   }
 
   return {
-    // Vuelo + fecha adelante (igual que un pase real de LATAM); Elévate pasa
-    // al reverso — a pedido de Cal (2026-07-17): la fecha del vuelo no se
-    // veía bien enterrada en un campo combinado de auxiliaryFields.
-    headerFields: [
-      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
-      { key: "flightDate", label: "FECHA", value: data.flightDate },
-    ],
+    headerFields: [{ key: "boarding", label: "ABORDAJE", value: `${data.boardingTime} ${toDDMM(data.flightDate)}` }],
     primaryFields: [
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
     ],
-    secondaryFields,
+    secondaryFields: [
+      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
+      { key: "departure", label: "SALIDA", value: data.departureTime },
+      { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
+    ],
     auxiliaryFields: [
       { key: "passenger", label: "PASAJERO", value: data.passengerName },
-      { key: "boarding", label: "ABORDAJE", value: data.boardingTime },
-      { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
-      { key: "group", label: "GRUPO", value: data.boardingGroup },
       { key: "seat", label: "ASIENTO", value: data.seat },
+      { key: "group", label: "GRUPO", value: data.boardingGroup },
+      { key: "class", label: "CLASE", value: data.travelClass },
     ],
     backFields,
   };
