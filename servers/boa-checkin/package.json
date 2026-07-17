@@ -14,6 +14,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
     "@napi-rs/canvas": "^1.0.2",
+    "bwip-js": "^4.11.2",
     "passkit-generator": "^3.5.7",
     "pdfjs-dist": "^6.1.200",
     "playwright": "1.61.1",
@@ -21,7 +22,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "bwip-js": "^4.11.2",
     "pdf-lib": "^1.17.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

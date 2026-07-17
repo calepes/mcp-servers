@@ -133,10 +133,26 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
     secondaryFields.push({ key: "arrival", label: "LLEGADA", value: data.arrivalTime });
   }
 
+  const backFields: PassField[] = [
+    { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
+    { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: data.boardingSequence ?? "—" },
+    { key: "class", label: "CLASE", value: data.travelClass },
+    { key: "originFull", label: "ORIGEN", value: `${data.originName} (${data.originCode})` },
+    { key: "destinationFull", label: "DESTINO", value: `${data.destinationName} (${data.destinationCode})` },
+    { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },
+  ];
+  if (data.frequentFlyerNumber) {
+    backFields.push({ key: "frequentFlyer", label: "ELÉVATE", value: data.frequentFlyerNumber });
+  }
+
   return {
-    headerFields: data.frequentFlyerNumber
-      ? [{ key: "frequentFlyer", label: "ELÉVATE", value: data.frequentFlyerNumber }]
-      : [],
+    // Vuelo + fecha adelante (igual que un pase real de LATAM); Elévate pasa
+    // al reverso — a pedido de Cal (2026-07-17): la fecha del vuelo no se
+    // veía bien enterrada en un campo combinado de auxiliaryFields.
+    headerFields: [
+      { key: "flightNumber", label: "VUELO", value: data.flightNumber },
+      { key: "flightDate", label: "FECHA", value: data.flightDate },
+    ],
     primaryFields: [
       { key: "origin", label: shortAirportLabel(data.originName), value: data.originCode },
       { key: "destination", label: shortAirportLabel(data.destinationName), value: data.destinationCode },
@@ -144,20 +160,12 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
     secondaryFields,
     auxiliaryFields: [
       { key: "passenger", label: "PASAJERO", value: data.passengerName },
-      { key: "flightInfo", label: "VUELO", value: `${data.flightNumber} · ${data.flightDate}` },
       { key: "boarding", label: "ABORDAJE", value: data.boardingTime },
       { key: "gate", label: "PUERTA", value: data.gate ?? "—" },
       { key: "group", label: "GRUPO", value: data.boardingGroup },
       { key: "seat", label: "ASIENTO", value: data.seat },
     ],
-    backFields: [
-      { key: "locator", label: "CÓDIGO DE RESERVA", value: data.locator },
-      { key: "sequence", label: "SECUENCIA DE ABORDAJE", value: data.boardingSequence ?? "—" },
-      { key: "class", label: "CLASE", value: data.travelClass },
-      { key: "originFull", label: "ORIGEN", value: `${data.originName} (${data.originCode})` },
-      { key: "destinationFull", label: "DESTINO", value: `${data.destinationName} (${data.destinationCode})` },
-      { key: "contact", label: "CONTACTO", value: "Boliviana de Aviación · consultas: boa.bo" },
-    ],
+    backFields,
   };
 }
 

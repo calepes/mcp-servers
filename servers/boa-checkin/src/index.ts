@@ -30,6 +30,7 @@ import {
 } from "./flow.js";
 import { decodeBoardingPassBarcode } from "./wallet-pdf417.js";
 import { loadWalletPassConfig, signAndPackagePass } from "./wallet-pass.js";
+import { renderPassCardImage } from "./wallet-image.js";
 
 const ASSETS_DIR = join(import.meta.dirname, "..", "assets");
 
@@ -303,14 +304,20 @@ async function generateBoaWalletPass(args: WalletPassArgs) {
       logo2xPng: readAssetFile("boa-logo@2x.png"),
     };
 
-    const pkpassBuffer = await signAndPackagePass({ ...scrapeData, barcodeMessage }, config, assets);
-    const pkpassPath = join(
-      tmpdir(),
-      `boa-wallet-${args.locator}-${targetPass.nombre.replace(/\s+/g, "")}.pkpass`,
-    );
+    const passData = { ...scrapeData, barcodeMessage };
+    const pkpassBuffer = await signAndPackagePass(passData, config, assets);
+    const fileStem = `boa-wallet-${args.locator}-${targetPass.nombre.replace(/\s+/g, "")}`;
+    const pkpassPath = join(tmpdir(), `${fileStem}.pkpass`);
     writeFileSync(pkpassPath, pkpassBuffer);
 
-    return asText({ pasajero: targetPass.nombre, pkpassPath });
+    // Imagen decorativa con el diseño navy/dorado aprobado por Cal — NO
+    // reemplaza el .pkpass (Wallet no soporta ese nivel de diseño, ver
+    // wallet-pass.ts), es un extra que Jano/Vesta mandan por separado.
+    const cardImageBuffer = await renderPassCardImage(passData, assets.logoPng);
+    const cardImagePath = join(tmpdir(), `${fileStem}.png`);
+    writeFileSync(cardImagePath, cardImageBuffer);
+
+    return asText({ pasajero: targetPass.nombre, pkpassPath, cardImagePath });
   } finally {
     await session.close();
   }
@@ -408,7 +415,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "generateBoaWalletPass",
       description:
-        "Genera un archivo .pkpass (Apple Wallet) escaneable del boarding pass de UN pasajero de un tramo de BoA YA checkeado — usar SOLO cuando Cal pida explícitamente 'el pase de Wallet'/'agrégalo a Wallet' (no se genera automáticamente junto al PDF). El código de barras es el mismo BCBP real del PDF oficial (decodificado del PDF417), así que sirve igual que el PDF en el control de embarque. `pasajero` (substring de nombre) desambigua si la reserva tiene más de uno; sin él toma el primero. Devuelve { pasajero, pkpassPath } — pkpassPath es un archivo LOCAL (no URL pública), hay que mandarlo con la tool de documento LOCAL del daemon, no con enviarDocumentoUrl. Si falta configurar el certificado (BOA_WALLET_* en apps.env) o el tramo no tiene el check-in hecho, tira error explícito.",
+        "Genera un archivo .pkpass (Apple Wallet) escaneable del boarding pass de UN pasajero de un tramo de BoA YA checkeado, MÁS una imagen .png de la tarjeta con el diseño navy/dorado aprobado por Cal (misma info, barcode real, solo decorativa) — usar SOLO cuando Cal pida explícitamente 'el pase de Wallet'/'agrégalo a Wallet' (no se genera automáticamente junto al PDF). El código de barras (tanto del .pkpass como de la imagen) es el mismo BCBP real del PDF oficial (decodificado del PDF417), así que sirve igual que el PDF en el control de embarque. `pasajero` (substring de nombre) desambigua si la reserva tiene más de uno; sin él toma el primero. Devuelve { pasajero, pkpassPath, cardImagePath } — ambos son archivos LOCALES (no URLs públicas): mandar pkpassPath con la tool de documento LOCAL, y cardImagePath con la tool de foto LOCAL (nunca con enviarDocumentoUrl/enviarFotoUrl). Si falta configurar el certificado (BOA_WALLET_* en apps.env) o el tramo no tiene el check-in hecho, tira error explícito.",
       inputSchema: {
         type: "object",
         properties: {

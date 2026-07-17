@@ -92,11 +92,10 @@ describe("buildBoaPassFields", () => {
     ]);
   });
 
-  it("puts passenger/flight-info/boarding/gate/group/seat in auxiliaryFields, using a placeholder for missing gate", () => {
+  it("puts passenger/boarding/gate/group/seat in auxiliaryFields, using a placeholder for missing gate", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.auxiliaryFields).toEqual([
       { key: "passenger", label: "PASAJERO", value: "Carlos Lepesqueur" },
-      { key: "flightInfo", label: "VUELO", value: "OB682 · 07 jul" },
       { key: "boarding", label: "ABORDAJE", value: "18:40" },
       { key: "gate", label: "PUERTA", value: "—" },
       { key: "group", label: "GRUPO", value: "2" },
@@ -104,19 +103,15 @@ describe("buildBoaPassFields", () => {
     ]);
   });
 
-  it("includes the frequent flyer number in headerFields when present", () => {
+  it("puts flight number and date in headerFields", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.headerFields).toEqual([
-      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
+      { key: "flightNumber", label: "VUELO", value: "OB682" },
+      { key: "flightDate", label: "FECHA", value: "07 jul" },
     ]);
   });
 
-  it("omits headerFields entirely when there is no frequent flyer number", () => {
-    const fields = buildBoaPassFields({ ...sampleData, frequentFlyerNumber: undefined });
-    expect(fields.headerFields).toEqual([]);
-  });
-
-  it("fills backFields with locator, sequence and full airport names", () => {
+  it("fills backFields with locator, sequence, full airport names and the frequent flyer number", () => {
     const fields = buildBoaPassFields(sampleData);
     expect(fields.backFields).toEqual([
       { key: "locator", label: "CÓDIGO DE RESERVA", value: "XK9F2P" },
@@ -129,7 +124,13 @@ describe("buildBoaPassFields", () => {
         label: "CONTACTO",
         value: "Boliviana de Aviación · consultas: boa.bo",
       },
+      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
     ]);
+  });
+
+  it("omits the frequent flyer backField entirely when there is no frequent flyer number", () => {
+    const fields = buildBoaPassFields({ ...sampleData, frequentFlyerNumber: undefined });
+    expect(fields.backFields.some((f) => f.key === "frequentFlyer")).toBe(false);
   });
 
   it("falls back to the whole trimmed+uppercased name when neither delimiter is present", () => {
@@ -153,6 +154,7 @@ describe("buildBoaPassFields", () => {
         label: "CONTACTO",
         value: "Boliviana de Aviación · consultas: boa.bo",
       },
+      { key: "frequentFlyer", label: "ELÉVATE", value: "EL 048213" },
     ]);
   });
 });
