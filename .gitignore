@@ -10,5 +10,6 @@ dist/
 !.env.template
 !.env.sample
 *.pem
+!servers/boa-checkin/assets/AppleWWDRCAG4.pem
 secrets
 .credentials*
