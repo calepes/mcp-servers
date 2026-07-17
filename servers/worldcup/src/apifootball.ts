@@ -1,5 +1,5 @@
 // Cliente API-Football (api-sports.io v3) para el Mundial 2026.
-// Free tier 100 req/día → caché agresiva. Key en env API_FOOTBALL_KEY.
+// Plan Pro (7500 req/día; el free NO da season 2026). Key en env API_FOOTBALL_KEY.
 // League id Mundial = 1, season = 2026 (ambos configurables por env).
 
 const BASE = "https://v3.football.api-sports.io";
@@ -29,8 +29,8 @@ export interface ApiError {
 function missingKey(): ApiError {
   return {
     error:
-      "Falta API_FOOTBALL_KEY. Registrate gratis en dashboard.api-football.com " +
-      "(plan free, 100 req/día) y poné la key en ~/.claude/secrets/apps.env como API_FOOTBALL_KEY.",
+      "Falta API_FOOTBALL_KEY. Requiere plan Pro en dashboard.api-football.com " +
+      "(el free NO da la season 2026); poné la key en ~/.claude/secrets/apps.env como API_FOOTBALL_KEY.",
   };
 }
 
@@ -103,16 +103,27 @@ function fmtKickoff(iso: string): string {
   }
 }
 
-/** Partidos por fecha (YYYY-MM-DD). Sin fecha: todos los del torneo. */
-export async function getFixtures(date?: string) {
+/** Partidos por fecha (YYYY-MM-DD) y/o equipo (nombre en inglés, partial match). Sin filtros: todos los del torneo. */
+export async function getFixtures(date?: string, team?: string) {
   const params: Record<string, string | number> = { league: LEAGUE, season: SEASON };
   if (date) params.date = date;
   const res = await api<RawFixture>("/fixtures", params);
   if (isErr(res)) return res;
+  let matches = res.response;
+  if (team) {
+    const t = team.toLowerCase();
+    matches = matches.filter((f) => {
+      const home = f.teams.home.name.toLowerCase();
+      const away = f.teams.away.name.toLowerCase();
+      return home.includes(t) || t.includes(home) || away.includes(t) || t.includes(away);
+    });
+    if (!matches.length) return { error: `No encontré partidos de "${team}" en el Mundial. Prueba el nombre en inglés.` };
+  }
   return {
     date: date ?? "all",
-    count: res.response.length,
-    fixtures: res.response.map((f) => ({
+    team: team ?? undefined,
+    count: matches.length,
+    fixtures: matches.map((f) => ({
       id: f.fixture.id,
       kickoff: f.fixture.date,
       kickoffLabel: fmtKickoff(f.fixture.date), // día+hora ya calculados (usar literal)
