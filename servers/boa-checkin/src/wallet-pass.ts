@@ -183,8 +183,14 @@ function readCertFile(path: string, label: string): Buffer {
  *   posicionales, en ese orden (confirmado en `PKPass.d.ts` y en el ejemplo
  *   "Buffer Model" del README). `buffers` es `{}` porque las imágenes se
  *   agregan después vía `addBuffer`.
- * - `pass.type = "boardingPass"` y `pass.transitType = "PKTransitTypeAir"`
- *   son setters reales (no van en el constructor).
+ * - `pass.type` es un setter real (no va en el constructor). Se usa
+ *   `"generic"` en vez de `"boardingPass"` a pedido de Cal (2026-07-17):
+ *   `boardingPass` fuerza el layout nativo de Apple (bloque gigante
+ *   origen→avión→destino, igual en cualquier aerolínea) — con `generic`
+ *   se pierde ese bloque automático pero se gana un layout de tarjeta
+ *   más libre y menos "clon" del pase real de BoA. `transitType` NO se
+ *   setea (solo es válido para `boardingPass`, tira error en cualquier
+ *   otro tipo).
  * - `headerFields`/`primaryFields`/etc. son GETTERS que devuelven un
  *   `FieldsArray` (subclase de `Array` con `push` real) — no hay setter,
  *   pero `.push(...)` sí muta el pass. Tal cual estaba en el plan.
@@ -235,8 +241,7 @@ export async function signAndPackagePass(
     },
   );
 
-  pass.type = "boardingPass";
-  pass.transitType = "PKTransitTypeAir";
+  pass.type = "generic";
   pass.headerFields.push(...fields.headerFields);
   pass.primaryFields.push(...fields.primaryFields);
   pass.secondaryFields.push(...fields.secondaryFields);
