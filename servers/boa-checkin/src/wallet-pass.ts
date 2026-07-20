@@ -111,6 +111,47 @@ function shortAirportLabel(name: string): string {
   return name.trim().toUpperCase();
 }
 
+/**
+ * Nombres de ciudad + aeropuerto por código IATA para los destinos que
+ * realmente vuela BoA — los 12 aeropuertos NAABOL de Bolivia (mismo set que
+ * `naabol-flights`/`vuelos-naabol-format.ts`) más los destinos
+ * internacionales confirmados (Wikipedia, 2026-07-20). Formato "Ciudad —
+ * Nombre Aeropuerto" a propósito: es el que `shortAirportLabel` espera para
+ * separar la ciudad del resto.
+ *
+ * No pretende ser exhaustivo — BoA anuncia rutas nuevas seguido. Un código no
+ * mapeado cae en `lookupAirportName` al propio código (mismo criterio de
+ * degradar con gracia que el resto de este archivo), nunca revienta.
+ */
+const AIRPORT_NAMES: Record<string, string> = {
+  // Bolivia (NAABOL)
+  VVI: "Santa Cruz — Viru Viru Intl.",
+  LPB: "La Paz — El Alto Intl.",
+  CBB: "Cochabamba — Jorge Wilstermann Intl.",
+  TJA: "Tarija — Oriel Lea Plaza",
+  SRE: "Sucre — Alcantarí",
+  ORU: "Oruro — Juan Mendoza",
+  UYU: "Uyuni — Joya Andina",
+  CIJ: "Cobija — Aníbal Arab",
+  RIB: "Riberalta — Riberalta",
+  RBQ: "Rurrenabaque — Rurrenabaque",
+  TDD: "Trinidad — Jorge Henrich Arauz",
+  GYA: "Guayaramerín — Guayaramerín",
+  // Internacional
+  MIA: "Miami — Miami Intl.",
+  EZE: "Buenos Aires — Ministro Pistarini",
+  GRU: "São Paulo — Guarulhos",
+  SCL: "Santiago — Arturo Merino Benítez",
+  LIM: "Lima — Jorge Chávez",
+  MAD: "Madrid — Barajas",
+  BCN: "Barcelona — El Prat",
+};
+
+/** Nombre legible de un código IATA, o el código tal cual si no está mapeado. */
+export function lookupAirportName(code: string): string {
+  return AIRPORT_NAMES[code] ?? code;
+}
+
 const MONTH_TO_NUMBER: Record<string, string> = {
   ene: "01", jan: "01",
   feb: "02",
@@ -190,7 +231,7 @@ export function buildBoaPassFields(data: WalletPassData): BoaPassFields {
     auxiliaryFields: [
       { key: "passenger", label: "NAME", value: data.passengerName },
       { key: "seat", label: "SEAT", value: data.seat },
-      { key: "group", label: "GROUP", value: data.boardingGroup },
+      { key: "group", label: "GROUP", value: data.boardingGroup || "—" },
       { key: "class", label: "CLASS", value: data.travelClass },
     ],
     backFields,

@@ -6,7 +6,62 @@ import {
   renderPdfFirstPageToImageData,
   decodePdf417FromImageData,
   decodeBoardingPassBarcode,
+  parseBcbpEssentials,
 } from "./wallet-pdf417.js";
+
+describe("parseBcbpEssentials", () => {
+  // Dos decodes reales del MISMO BCBP (reserva HVKNUC, OB663, Santa Cruz ->
+  // La Paz, 2026-07-20 — antes y después de un cambio de asiento). El
+  // segundo decode leyó el campo de nombre 1 carácter más corto
+  // ("LEPESQUEUR" vs "LEPESQUEUER" — ruido del decode PDF417, no un dato
+  // real distinto), lo que corría origen/destino con offsets absolutos
+  // ("VIL"/"PBO" en vez de "VVI"/"LPB"). Ambos deben dar el mismo resultado
+  // de ruta con el anclaje por PNR.
+  const realBcbpSeat29F =
+    "M1LEPESQUEUER/CARLOS   EHVKNUC VVILPBOB 0663 202Y029F0033 333>2080      B25             0    OB 1004032503      ";
+  const realBcbpSeat9B =
+    "M1LEPESQUEUR/CARLOS   EHVKNUC VVILPBOB 0663 202Y009B0033 333>2080      B25             0    OB 1004032503      ";
+
+  it("extracts origin, destination, flight number and seat from a real BCBP message", () => {
+    expect(parseBcbpEssentials(realBcbpSeat29F, "HVKNUC")).toEqual({
+      originCode: "VVI",
+      destinationCode: "LPB",
+      carrier: "OB",
+      flightNumber: "OB663",
+      seat: "29F",
+    });
+  });
+
+  it("stays correct when a shorter name field shifts every fixed-offset column by one", () => {
+    expect(parseBcbpEssentials(realBcbpSeat9B, "HVKNUC")).toEqual({
+      originCode: "VVI",
+      destinationCode: "LPB",
+      carrier: "OB",
+      flightNumber: "OB663",
+      seat: "9B",
+    });
+  });
+
+  it("returns empty fields instead of throwing when the PNR isn't found in the message", () => {
+    expect(parseBcbpEssentials("M1TOO SHORT", "HVKNUC")).toEqual({
+      originCode: "",
+      destinationCode: "",
+      carrier: "",
+      flightNumber: "",
+      seat: "",
+    });
+  });
+
+  it("returns empty fields when the PNR is found but the message is truncated right after it", () => {
+    expect(parseBcbpEssentials("M1NAME EHVKNUC", "HVKNUC")).toEqual({
+      originCode: "",
+      destinationCode: "",
+      carrier: "",
+      flightNumber: "",
+      seat: "",
+    });
+  });
+});
 
 describe("renderPdfFirstPageToImageData", () => {
   it("rasterizes a one-page PDF at the requested scale", async () => {

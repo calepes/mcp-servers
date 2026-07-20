@@ -48,6 +48,7 @@ function esc(value: string): string {
 
 function buildCardHtml(data: WalletPassData, logoBase64: string, barcodeBase64: string): string {
   const gate = data.gate ?? "—";
+  const boardingGroup = data.boardingGroup || "—";
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -135,7 +136,7 @@ function buildCardHtml(data: WalletPassData, logoBase64: string, barcodeBase64: 
       </div>
       <div class="perforation"></div>
       <div class="pass-fields">
-        <div class="field"><div class="label">Grupo</div><div class="value">${esc(data.boardingGroup)}</div></div>
+        <div class="field"><div class="label">Grupo</div><div class="value${boardingGroup === "—" ? " muted" : ""}">${esc(boardingGroup)}</div></div>
         <div class="field"><div class="label">Puerta</div><div class="value${gate === "—" ? " muted" : ""}">${esc(gate)}</div></div>
         <div class="field"><div class="label">Asiento</div><div class="value">${esc(data.seat)}</div></div>
       </div>

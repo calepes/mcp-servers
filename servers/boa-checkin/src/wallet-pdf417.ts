@@ -77,3 +77,55 @@ export async function decodeBoardingPassBarcode(pdfBuffer: Buffer): Promise<stri
   const imageData = await renderPdfFirstPageToImageData(pdfBuffer, 3);
   return decodePdf417FromImageData(imageData);
 }
+
+export interface BcbpEssentials {
+  originCode: string;
+  destinationCode: string;
+  carrier: string;
+  flightNumber: string;
+  seat: string;
+}
+
+/**
+ * Extrae origen/destino/vuelo/asiento del mensaje BCBP crudo (formato "M1",
+ * IATA Bar Coded Boarding Pass) anclando la lectura en el PNR/locator YA
+ * conocido, en vez de offsets absolutos fijos desde el inicio del mensaje.
+ *
+ * Bug real 2026-07-20 (reserva HVKNUC): la primera versión de esta función
+ * usaba offsets absolutos calibrados contra UN decode real. Funcionó para
+ * ese decode, pero en un segundo decode del MISMO PNR (después de un cambio
+ * de asiento) el campo de nombre del pasajero salió 1 carácter más corto
+ * ("LEPESQUEUR" en vez de "LEPESQUEUER" — ruido del decode PDF417, no un
+ * dato real distinto) y corrió todos los campos siguientes una posición:
+ * origen/destino salieron "VIL"/"PBO" en vez de "VVI"/"LPB". El campo de
+ * nombre NO tiene largo confiable entre lecturas; el PNR sí lo conocemos de
+ * antemano (`args.locator`) y es angosto — buscarlo con `indexOf` da un
+ * ancla confiable. El PNR ocupa 7 caracteres justo antes de From/To, así
+ * que el resto de los campos se leen relativos a `pnrIndex + 7`. Validado
+ * contra ambos decodes reales de HVKNUC (el corrupto y el limpio) — los dos
+ * dan VVI/LPB/OB663 con este anclaje.
+ *
+ * Degrada con gracia (campos vacíos, nunca throw) si no encuentra el PNR o
+ * el mensaje es más corto que lo esperado — mismo criterio que el resto del
+ * scraping best-effort de este MCP.
+ */
+export function parseBcbpEssentials(message: string, pnrCode: string): BcbpEssentials {
+  const empty = { originCode: "", destinationCode: "", carrier: "", flightNumber: "", seat: "" };
+  const pnrIndex = message.indexOf(pnrCode.toUpperCase());
+  if (pnrIndex === -1) return empty;
+
+  const routeStart = pnrIndex + 7; // el campo PNR (7 chars) termina justo antes de From/To
+  if (message.length < routeStart + 22) return empty;
+
+  const carrier = message.slice(routeStart + 6, routeStart + 9).trim();
+  const flightDigits = message.slice(routeStart + 9, routeStart + 14).trim().replace(/^0+/, "");
+  const seatRow = message.slice(routeStart + 18, routeStart + 21).replace(/^0+/, "");
+  const seatLetter = message.slice(routeStart + 21, routeStart + 22);
+  return {
+    originCode: message.slice(routeStart, routeStart + 3),
+    destinationCode: message.slice(routeStart + 3, routeStart + 6),
+    carrier,
+    flightNumber: flightDigits ? `${carrier}${flightDigits}` : "",
+    seat: seatRow && seatLetter ? `${seatRow}${seatLetter}` : "",
+  };
+}

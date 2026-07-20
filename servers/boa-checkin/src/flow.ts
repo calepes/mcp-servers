@@ -1,7 +1,7 @@
 import type { Page, Frame } from "playwright";
 import type { BoaTraveler } from "./travelers.js";
 import { missingBoaFields } from "./missing-fields.js";
-import type { WalletPassData } from "./wallet-pass.js";
+import { lookupAirportName, type WalletPassData } from "./wallet-pass.js";
 
 /**
  * `page.frame()` es sincrónico y devuelve null si el <iframe> todavía no se
@@ -452,7 +452,14 @@ export async function getWalletPassScrapeData(
   const destinationCode = route?.[2]?.toUpperCase() ?? "";
   const seat = (rowText.match(/Seat\s*([0-9]{1,2}[A-Z])/i) || [])[1] ?? "";
   const boardingGroup = (rowText.match(/Group\s*([0-9]+)/i) || [])[1] ?? "";
-  const gate = (rowText.match(/Gate\s*([A-Z0-9]+)/i) || [])[1];
+  // Bug real encontrado 2026-07-20 (reserva HVKNUC): `[A-Z0-9]+` sin límite
+  // capturaba texto de relleno tipo "Gate: Check..." (BoA no muestra puerta
+  // real hasta más cerca del vuelo) devolviendo "Check" como si fuera un
+  // código de puerta. Un código de puerta real es corto y casi siempre trae
+  // al menos un dígito ("3", "12", "B25") — se limita el largo a 4 y se
+  // exige un dígito para filtrar palabras sueltas.
+  const gateCandidate = (rowText.match(/Gate\s*:?\s*([A-Z0-9]{1,4})\b/i) || [])[1];
+  const gate = gateCandidate && /\d/.test(gateCandidate) ? gateCandidate.toUpperCase() : undefined;
   const travelClass = /business/i.test(rowText) ? "Business" : "Economy";
   const departureTime = (rowText.match(/Departure\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1] ?? "";
   const arrivalTime = (rowText.match(/(?:Arrival|Landing)\s*([0-9]{1,2}:[0-9]{2})/i) || [])[1];
@@ -466,9 +473,9 @@ export async function getWalletPassScrapeData(
     frequentFlyerNumber: frequentFlyerMatch?.[1]?.trim(),
     flightNumber,
     originCode,
-    originName: originCode, // placeholder legible — reemplazar con el mapeo IATA->nombre completo si BoA lo muestra en pantalla
+    originName: lookupAirportName(originCode),
     destinationCode,
-    destinationName: destinationCode,
+    destinationName: lookupAirportName(destinationCode),
     departureTime,
     arrivalTime,
     boardingTime,

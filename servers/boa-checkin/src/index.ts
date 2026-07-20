@@ -28,8 +28,8 @@ import {
   getBoardingPassUrl,
   getWalletPassScrapeData,
 } from "./flow.js";
-import { decodeBoardingPassBarcode } from "./wallet-pdf417.js";
-import { loadWalletPassConfig, signAndPackagePass } from "./wallet-pass.js";
+import { decodeBoardingPassBarcode, parseBcbpEssentials } from "./wallet-pdf417.js";
+import { loadWalletPassConfig, signAndPackagePass, lookupAirportName } from "./wallet-pass.js";
 import { renderPassCardImage } from "./wallet-image.js";
 
 const ASSETS_DIR = join(import.meta.dirname, "..", "assets");
@@ -296,6 +296,22 @@ async function generateBoaWalletPass(args: WalletPassArgs) {
     if (!pdfRes.ok) throw new Error(`No pude descargar el PDF del boarding pass (HTTP ${pdfRes.status}).`);
     const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
     const barcodeMessage = await decodeBoardingPassBarcode(pdfBuffer);
+
+    // El scraping de "Manage your booking" (getWalletPassScrapeData) puede
+    // devolver origen/destino vacíos si el layout real de BoA no matchea el
+    // regex de ruta (bug real encontrado 2026-07-20, reserva HVKNUC: origen y
+    // destino salieron "" en el pkpass). El BCBP recién decodificado es el
+    // documento oficial del boarding pass — más confiable que el scrape —
+    // así que pisa el origen/destino scrapeado cuando el barcode trae dato.
+    const bcbp = parseBcbpEssentials(barcodeMessage, args.locator);
+    if (bcbp.originCode) {
+      scrapeData.originCode = bcbp.originCode;
+      scrapeData.originName = lookupAirportName(bcbp.originCode);
+    }
+    if (bcbp.destinationCode) {
+      scrapeData.destinationCode = bcbp.destinationCode;
+      scrapeData.destinationName = lookupAirportName(bcbp.destinationCode);
+    }
 
     const assets = {
       iconPng: readAssetFile("boa-icon.png"),

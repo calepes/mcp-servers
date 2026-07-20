@@ -1,5 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadWalletPassConfig, buildBoaPassFields, type WalletPassData } from "./wallet-pass.js";
+import { loadWalletPassConfig, buildBoaPassFields, lookupAirportName, type WalletPassData } from "./wallet-pass.js";
+
+describe("lookupAirportName", () => {
+  it("resolves known domestic and international IATA codes to 'Ciudad — Aeropuerto'", () => {
+    expect(lookupAirportName("VVI")).toBe("Santa Cruz — Viru Viru Intl.");
+    expect(lookupAirportName("LPB")).toBe("La Paz — El Alto Intl.");
+    expect(lookupAirportName("MIA")).toBe("Miami — Miami Intl.");
+  });
+
+  it("falls back to the raw code for an unmapped IATA code", () => {
+    expect(lookupAirportName("XYZ")).toBe("XYZ");
+  });
+});
 
 const ENV_KEYS = [
   "BOA_WALLET_PASS_TYPE_ID",
@@ -139,6 +151,11 @@ describe("buildBoaPassFields", () => {
   it("omits the frequent flyer backField entirely when there is no frequent flyer number", () => {
     const fields = buildBoaPassFields({ ...sampleData, frequentFlyerNumber: undefined });
     expect(fields.backFields.some((f) => f.key === "frequentFlyer")).toBe(false);
+  });
+
+  it("falls back to a placeholder in auxiliaryFields when boardingGroup is empty", () => {
+    const fields = buildBoaPassFields({ ...sampleData, boardingGroup: "" });
+    expect(fields.auxiliaryFields).toContainEqual({ key: "group", label: "GROUP", value: "—" });
   });
 
   it("falls back to the whole trimmed+uppercased name when neither delimiter is present", () => {
