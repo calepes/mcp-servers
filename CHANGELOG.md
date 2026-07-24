@@ -1,5 +1,13 @@
 # CHANGELOG — MCP Servers
 
+## 2026-07-23
+
+### inversiones-query — fix bug crítico de "1D" (chartPreviousClose) + fórmula de fee
+
+- **Fix `getDailyMovers`/`getPortfolioPerformance` (bug crítico):** `getQuoteFromChart` (Yahoo) usaba `meta.chartPreviousClose` como cierre de ayer. Con `range=5d`, ese campo apunta al cierre previo a TODA la ventana solicitada (~6 sesiones atrás), no al día anterior — el "cambio 1D" en realidad era un cambio acumulado de ~1 semana mal etiquetado. Producía signo invertido en algunos tickers (Jano mostraba NU +2.9% y CRCL +2.5% cuando en realidad ambos bajaban -2.2% y -6.0%) y magnitud inflada 2-4x en el resto (NOW -11.6% real -3.7%, GOOGL -10.4% real -7.1%). Detectado al comparar la respuesta de Jano contra Kubera `get_top_movers` y precios en vivo de IBKR. Fix: tomar el penúltimo cierre del array `indicators.quote[0].close` que ya trae el chart endpoint (con fallback hacia atrás si viniera `null`, ej. pre-market/feriado).
+- **Fix `airtable.ts` — fórmula fallback de `totalAmount`:** cuando falta el campo formula `Valor Transaccion ($)`, el fallback calculaba `price*shares + fee` (fee como monto plano). `Fee ($)` es por-unidad (mismo criterio que `--fee` del CLI `inversiones`), así que la fórmula correcta es `(price+fee)*shares`. Corregido.
+- **Tests:** `movers.test.ts` y `yahoo.test.ts` estaban desalineados con la firma/implementación actual (faltaba el parámetro `positions` en `buildDailyMovers`; el mock de `yahoo.test.ts` simulaba el endpoint bulk viejo `/v7/finance/quote`, bloqueado por Yahoo desde antes). `airtable.test.ts` mockeaba nombres de campo que no coinciden con el schema real de Airtable (`Activo`/`Tipo Transaccion`/`Precio Unitario`/`fee` en vez de `Ticket`/`Tipo de Transaccion`/`PU - Transaccion`/`Fee  ($)`). Los 4 archivos actualizados; suite completa 39/39 verde. Deployado a producción (`worker:deploy`), verificado contra el endpoint en vivo.
+
 ## 2026-06-20
 
 ### feedbin — starred, carpetas/tags y getEntriesByFeed paginado (18 → 25 tools)
