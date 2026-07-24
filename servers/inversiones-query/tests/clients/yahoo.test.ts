@@ -1,18 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { YahooClient } from "../../src/clients/yahoo.js";
 
-const mockQuoteResponse = {
-  quoteResponse: {
+// getBulkQuotes fetches the chart endpoint per ticker (the v7 bulk quote endpoint
+// is blocked by Yahoo) — mock must match that shape, not a quoteResponse.
+const mockSpyChartResponse = {
+  chart: {
     result: [
       {
-        symbol: "SPY",
-        shortName: "SPDR S&P 500",
-        regularMarketPrice: 500,
-        regularMarketChangePercent: 1.5,
-        regularMarketChange: 7.5,
-        currency: "USD",
-        regularMarketTime: 1715000000,
-        marketState: "REGULAR",
+        meta: {
+          currency: "USD",
+          regularMarketPrice: 500,
+          shortName: "SPDR S&P 500",
+          regularMarketTime: 1715000000,
+          marketState: "REGULAR",
+        },
+        indicators: { quote: [{ close: [485, 490, 492.5, 495, 500] }] },
       },
     ],
     error: null,
@@ -38,7 +40,7 @@ describe("YahooClient", () => {
   it("fetches bulk quotes for multiple tickers", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => mockQuoteResponse })
+      vi.fn().mockResolvedValue({ ok: true, json: async () => mockSpyChartResponse })
     );
 
     const client = new YahooClient();
@@ -46,6 +48,64 @@ describe("YahooClient", () => {
     expect(quotes).toHaveLength(1);
     expect(quotes[0].symbol).toBe("SPY");
     expect(quotes[0].regularMarketPrice).toBe(500);
+  });
+
+  it("computes the daily change from the prior trading day's close, not chartPreviousClose", async () => {
+    // Regression test for the bug where meta.chartPreviousClose (the close before the
+    // whole requested range, ~6 sessions back with range=5d) was used as "yesterday",
+    // producing a multi-day drift mislabeled as the 1-day change.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          chart: {
+            result: [
+              {
+                meta: {
+                  currency: "USD",
+                  regularMarketPrice: 14.19,
+                  chartPreviousClose: 13.79, // ~6 sessions back — must NOT be used
+                },
+                indicators: { quote: [{ close: [13.59, 13.99, 14.39, 14.51, 14.19] }] },
+              },
+            ],
+            error: null,
+          },
+        }),
+      })
+    );
+
+    const client = new YahooClient();
+    const [quote] = await client.getBulkQuotes(["NU"]);
+    expect(quote.regularMarketPrice).toBe(14.19);
+    // True prior close is the second-to-last daily close (14.51), not chartPreviousClose (13.79).
+    expect(quote.regularMarketChange).toBeCloseTo(14.19 - 14.51, 4);
+    expect(quote.regularMarketChangePercent).toBeCloseTo(((14.19 - 14.51) / 14.51) * 100, 2);
+  });
+
+  it("skips a null last close (pre-market/no trade yet) when finding the prior close", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          chart: {
+            result: [
+              {
+                meta: { currency: "USD", regularMarketPrice: 100 },
+                indicators: { quote: [{ close: [95, 98, null] }] },
+              },
+            ],
+            error: null,
+          },
+        }),
+      })
+    );
+
+    const client = new YahooClient();
+    const [quote] = await client.getBulkQuotes(["XYZ"]);
+    expect(quote.regularMarketChange).toBeCloseTo(100 - 98, 4);
   });
 
   it("fetches price history for a ticker", async () => {
@@ -75,12 +135,14 @@ describe("YahooClient", () => {
     expect(history.history[1].changePct).toBeCloseTo((495 - 490) / 490 * 100, 2);
   });
 
-  it("throws on HTTP error", async () => {
+  it("omits a ticker whose request fails, without failing the whole batch", async () => {
+    // getBulkQuotes uses Promise.allSettled — one bad ticker shouldn't kill the batch.
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => "Too Many Requests" })
     );
     const client = new YahooClient();
-    await expect(client.getBulkQuotes(["SPY"])).rejects.toThrow("Yahoo Finance HTTP 429");
+    const quotes = await client.getBulkQuotes(["SPY"]);
+    expect(quotes).toEqual([]);
   });
 });

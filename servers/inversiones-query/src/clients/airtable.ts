@@ -79,8 +79,8 @@ export class AirtableClient {
 
       const shares = Number(f["Cuotas"] ?? 0);
       const price = Number(f["PU - Transaccion"] ?? 0);
-      const fee = Number(f["Fee  ($)"] ?? 0);
-      const totalAmount = Number(f["Valor Transaccion ($)"] ?? (price * Math.abs(shares) + fee));
+      const fee = Number(f["Fee  ($)"] ?? 0); // per-unit, not a flat total — see CLAUDE.md
+      const totalAmount = Number(f["Valor Transaccion ($)"] ?? ((price + fee) * Math.abs(shares)));
 
       return {
         date: String(f["Fecha"] ?? ""),

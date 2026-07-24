@@ -22,12 +22,31 @@ export class YahooClient {
     const res = await fetch(url, { headers: { "User-Agent": UA } });
     if (!res.ok) throw new Error(`Yahoo Finance HTTP ${res.status} for ${ticker}`);
     const data = await res.json() as {
-      chart: { result: Array<{ meta: Record<string, unknown> }>; error: unknown };
+      chart: {
+        result: Array<{
+          meta: Record<string, unknown>;
+          indicators?: { quote?: Array<{ close?: (number | null)[] }> };
+        }>;
+        error: unknown;
+      };
     };
     if (data.chart.error) throw new Error(`Yahoo Finance error for ${ticker}`);
-    const meta = data.chart.result[0]?.meta ?? {};
+    const result = data.chart.result[0];
+    const meta = result?.meta ?? {};
     const price = Number(meta["regularMarketPrice"] ?? 0);
-    const prevClose = Number(meta["chartPreviousClose"] ?? price);
+    // meta.chartPreviousClose is the close *before the requested range* (with range=5d,
+    // ~6 trading days back), NOT yesterday's close — using it here previously produced
+    // a multi-day drift mislabeled as the 1-day change. The daily closes array from the
+    // chart itself is the reliable source for the prior trading day's close.
+    const closes = result?.indicators?.quote?.[0]?.close ?? [];
+    let prevClose = price;
+    for (let i = closes.length - 2; i >= 0; i--) {
+      const c = closes[i];
+      if (c !== null && c !== undefined) {
+        prevClose = c;
+        break;
+      }
+    }
     const change = price - prevClose;
     const changePct = prevClose ? (change / prevClose) * 100 : 0;
     return {
