@@ -18,6 +18,7 @@ import {
   endSession,
   claimCompletion,
   nuevoPurchaseId,
+  reapStaleSessions,
 } from "./compra-store.js";
 
 function asText(result: unknown) {
@@ -279,6 +280,25 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { isError: true, content: [{ type: "text" as const, text: `Error en ${name}: ${msg}` }] };
   }
 });
+
+// Cierra el Chrome de compras abandonadas. Sin polling de pago, es la ÚNICA
+// red de seguridad: si el usuario nunca confirma, nadie más cierra el browser.
+// unref() evita que el timer mantenga vivo el proceso por sí solo.
+// El .catch() es defensivo: hoy reapStaleSessions no rechaza (endSession ya
+// atrapa el fallo de browser.close()), pero un rejection acá sería unhandled
+// dentro del setInterval y podría tumbar el proceso entero — o sea, el bot
+// perdería el MCP de cine. Todo log va a stderr: stdout es el canal JSON-RPC.
+const reaper = setInterval(() => {
+  void reapStaleSessions()
+    .then((n) => {
+      if (n > 0) console.error(`[cine] reaper cerró ${n} compra(s) vencida(s)`);
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[cine] reaper falló: ${msg}`);
+    });
+}, 2 * 60_000);
+reaper.unref();
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
