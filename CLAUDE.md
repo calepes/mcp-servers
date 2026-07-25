@@ -50,8 +50,15 @@ Cada servidor con doc específica tiene `servers/<name>/docs/`. Actualmente: `he
 
 El SDK Node NO lee `~/.claude/.mcp.json` — registrar explícitamente en `BASE_OPTIONS.mcpServers`:
 ```typescript
-"<name>": { type: "stdio", command: "node", args: ["/abs/path/dist/index.js"], env: { ... } }
+"<name>": { type: "stdio", command: "/usr/local/bin/node", args: ["/abs/path/dist/index.js"], env: { ... } }
 ```
+
+⚠️ **`command` con path ABSOLUTO de node, nunca `"node"` a secas.** launchd arranca los daemons con
+un PATH mínimo (`/usr/bin:/bin`) que NO incluye `/usr/local/bin`, y el spawn falla **en silencio**:
+el server no levanta, sus tools no aparecen y el síntoma es un `turn_summary` con `toolCalls: []`
+porque el modelo nunca las vio — sin ningún error en los logs. Jano tenía 13 MCPs con `"node"`
+relativo que funcionaban de casualidad (heredaba un PATH que lo incluía); unificados en la constante
+`NODE_BIN` el 2026-07-25.
 Y agregar `"mcp__<name>__<tool>"` a `allowedTools` en `agent-options.ts`.
 
 ## MCPs remotos (via mcp-remote)
