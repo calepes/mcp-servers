@@ -12,9 +12,16 @@
 // fingerprint aun en headless. Cinemark y Cine Center funcionan con cualquiera,
 // pero usamos Chrome para todos por consistencia.
 //
-// v1: solo cartelera de HOY. Los 3 sitios muestran el día actual sin necesidad
-// de clicks en el selector de fecha (Cinemark /pelicula/{slug}, Multicine
-// buy-tickets, Cine Center /Horarios). Fechas futuras = mejora incremental.
+// Los 3 cines soportan fecha (YYYY-MM-DD, ya resuelta por fecha.ts). Cada sitio
+// la expone distinto:
+// - Cinemark: parámetro del BFF JSON. El fallback DOM (/pelicula/{slug}) solo
+//   sabe leer HOY, así que ante fecha futura + BFF caído fallamos explícito.
+// - Multicine: click en el carrusel de días (.day_card) de buy-tickets, que
+//   recarga la grilla client-side. Muestra ~7 días. (Existe además una URL con
+//   la fecha en el path, /movies/{slug}/showtimes/{fecha}, pero es POR PELÍCULA
+//   y con otro DOM: obligaría a una navegación por película. Sobre buy-tickets
+//   la fecha en el path da 404 y ?date= se ignora — verificado.)
+// - Cine Center: click en el tab de fecha (.opcion-fecha). Muestra ~12-15 días.
 //
 // Parseo por innerText/selectores estables, NO por clases CSS ofuscadas:
 // - Cinemark: texto "2D · Doblada" + "10:20hs" bajo "HORARIOS EN CINEMARK".
@@ -69,6 +76,17 @@ const UBICACIONES = {
   multicine: "Multicine — C.C. Las Brisas, 4to anillo y Av. Banzer, 3er piso, Santa Cruz",
   cinecenter: "Cine Center — MegaCenter, Av. El Trompillo (2do anillo) esq. René Moreno, Santa Cruz",
 } as const;
+
+// Prefijo de 3 letras del mes, para matchear los selectores de fecha de
+// Multicine ("dom.26jul") y Cine Center ("Domingo 26 Julio") — ambos empiezan
+// igual. Chequear el mes evita el falso positivo del mismo día del mes siguiente
+// (pedir el 26/ago y quedarse con el tab del 26/jul).
+const MESES3 = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"] as const;
+
+/** { dia, mes3 } de una fecha YYYY-MM-DD, para comparar contra el texto de un tab. */
+function diaMes(fecha: string): { dia: number; mes3: string } {
+  return { dia: Number(fecha.slice(8, 10)), mes3: MESES3[Number(fecha.slice(5, 7)) - 1] };
+}
 
 // Normaliza para comparar títulos: minúsculas, sin tildes, sin puntuación.
 function norm(s: string): string {
@@ -256,7 +274,6 @@ async function scrapeCinemark(
 }
 
 // ---------------- MULTICINE ----------------
-// `fecha` queda declarada y sin usar: la navegación por fecha es la Tarea 6.
 async function scrapeMulticine(
   getBrowser: GetBrowser,
   pelicula?: string,
@@ -282,6 +299,35 @@ async function scrapeMulticine(
         peliculas: [],
         error: "403 WAF (CINEsync) — Chrome real requerido",
       };
+    }
+    // buy-tickets abre siempre en HOY; para otro día hay que tocar el carrusel
+    // de días. Si la fecha pedida ES hoy, nos ahorramos el click y la espera.
+    if (fecha && fecha !== hoyLaPaz()) {
+      const cambio = await page.evaluate(({ dia, mes3 }: { dia: number; mes3: string }) => {
+        // Las tarjetas dicen "dom.26jul" (sin espacios): sacamos día + mes del
+        // texto y exigimos que coincidan los dos.
+        const cards = Array.from(document.querySelectorAll(".day_card"));
+        // Sin normalizar tildes: el nombre del día ("sáb.") va ANTES del número
+        // y ningún mes en español lleva tilde, así que [a-z]+ alcanza.
+        const card = cards.find((c) => {
+          const m = /(\d{1,2})\s*\.?\s*([a-z]+)/.exec((c.textContent ?? "").toLowerCase());
+          return !!m && Number(m[1]) === dia && m[2].startsWith(mes3);
+        });
+        if (!card) return false;
+        card.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        return true;
+      }, diaMes(fecha));
+      if (!cambio) {
+        return {
+          cine: "Multicine",
+          ubicacion: UBICACIONES.multicine,
+          ok: false,
+          error: `No encontré el día ${fecha} en el selector de Multicine (muestra ~7 días).`,
+          peliculas: [],
+        };
+      }
+      // La grilla se repinta client-side tras pedir las funciones del día.
+      await page.waitForTimeout(4000);
     }
     const pelis = await page.evaluate(() => {
       const IDIOMAS = /^(Español|Ingl[eé]s|Portugu[eé]s|Subtitulad|Doblad)/i;
@@ -319,7 +365,6 @@ async function scrapeMulticine(
 }
 
 // ---------------- CINE CENTER ----------------
-// `fecha` queda declarada y sin usar: la navegación por fecha es la Tarea 6.
 async function scrapeCineCenter(
   getBrowser: GetBrowser,
   pelicula?: string,
@@ -333,6 +378,36 @@ async function scrapeCineCenter(
     await page.goto("https://www.cinecenter.com.bo/Horarios", { waitUntil: "domcontentloaded", timeout: 30000 });
     // Blazor Server (SignalR): la cartelera llega server-side tras el handshake.
     await page.waitForTimeout(6500);
+    // /Horarios abre en HOY: si piden hoy, ni click ni espera extra.
+    if (fecha && fecha !== hoyLaPaz()) {
+      const cambio = await page.evaluate(({ f, dia, mes3 }: { f: string; dia: number; mes3: string }) => {
+        const tabs = Array.from(document.querySelectorAll(".opcion-fecha"));
+        // Los tabs dicen "Domingo 26 Julio" (el día puede venir con cero a la
+        // izquierda) y hoy no exponen la fecha en un atributo — igual chequeamos
+        // data-fecha por si el sitio lo agrega. Mismo criterio día+mes que
+        // Multicine; el nombre del día va antes del número y no estorba.
+        const tab = tabs.find((t) => {
+          if (t.getAttribute("data-fecha") === f) return true;
+          const m = /(\d{1,2})\s*\.?\s*([a-z]+)/.exec((t.textContent ?? "").toLowerCase());
+          return !!m && Number(m[1]) === dia && m[2].startsWith(mes3);
+        });
+        if (!tab) return false;
+        // Blazor escucha el evento burbujeado: .click() directo NO alcanza.
+        tab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        return true;
+      }, { f: fecha, ...diaMes(fecha) });
+      if (!cambio) {
+        return {
+          cine: "Cine Center",
+          ubicacion: UBICACIONES.cinecenter,
+          ok: false,
+          error: `No encontré la pestaña de la fecha ${fecha} (Cine Center muestra ~15 días).`,
+          peliculas: [],
+        };
+      }
+      // Round-trip SignalR: el DOM se repinta desde el servidor.
+      await page.waitForTimeout(2000);
+    }
     const pelis = await page.evaluate(() => {
       const lines = document.body.innerText
         .split("\n")
