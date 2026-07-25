@@ -58,8 +58,9 @@ export interface PeliculaBff {
 }
 
 function norm(s: string): string {
-  // Marcas diacríticas combinantes: "ODISEA" matchea "odisea" y "ódisea".
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  // \u0300-\u036f = marcas diacríticas combinantes. Escrito con escapes y NO con los
+  // caracteres literales, que son invisibles en el editor y se corrompen al copiar.
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
 async function getJson(path: string): Promise<unknown> {
