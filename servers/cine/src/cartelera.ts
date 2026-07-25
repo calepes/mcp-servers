@@ -22,7 +22,7 @@
 // - Cine Center: título → sub-bloques "2D DOB" → funciones "HH:MM - NN Bs."
 //   (Blazor SignalR: requiere ~6s de espera para el round-trip server-side).
 
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { fetchCartelera } from "./cinemark-bff.js";
 import { hoyLaPaz } from "./fecha.js";
 // playwright está hoisted en el root del workspace (no en daemon-v2/node_modules).
@@ -33,6 +33,13 @@ const { chromium } = require("playwright") as typeof import("playwright");
 
 const CHROME_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/**
+ * Getter perezoso del browser: lanza Chrome la PRIMERA vez que alguien lo pide y
+ * lo reusa. Los adapters lo llaman solo si de verdad necesitan Playwright, así una
+ * consulta que se resuelve entera por el BFF nunca abre Chrome.
+ */
+type GetBrowser = () => Promise<Browser>;
 
 export interface Funcion {
   formato: string; // "2D", "2D XL", "3D Atmos", "2D + PREMIER", etc.
@@ -192,8 +199,9 @@ async function scrapeCinemarkDom(browser: Browser, pelicula?: string): Promise<C
 }
 
 // Cinemark: BFF JSON como fuente primaria, scraper DOM como plan B.
+// Si el BFF responde, `getBrowser` NUNCA se llama y Chrome no se lanza.
 async function scrapeCinemark(
-  browser: Browser,
+  getBrowser: GetBrowser,
   pelicula?: string,
   fecha?: string,
 ): Promise<CineResultado> {
@@ -226,20 +234,40 @@ async function scrapeCinemark(
         peliculas: [],
       };
     }
-    const r = await scrapeCinemarkDom(browser, pelicula);
-    return { ...r, fuente: "scraping" };
+    try {
+      const r = await scrapeCinemarkDom(await getBrowser(), pelicula);
+      return { ...r, fuente: "scraping" };
+    } catch (e2) {
+      // Único camino que llega acá: no se pudo lanzar Chrome (scrapeCinemarkDom
+      // atrapa sus propios errores). Devolvemos resultado, no excepción, para no
+      // tumbar de paso a Multicine y Cine Center.
+      return {
+        cine: "Cinemark",
+        ubicacion: UBICACIONES.cinemark,
+        ok: false,
+        fuente: "scraping",
+        error: `El BFF de Cinemark falló y tampoco pude abrir el navegador: ${
+          e2 instanceof Error ? e2.message : String(e2)
+        }`,
+        peliculas: [],
+      };
+    }
   }
 }
 
 // ---------------- MULTICINE ----------------
 // `fecha` queda declarada y sin usar: la navegación por fecha es la Tarea 6.
 async function scrapeMulticine(
-  browser: Browser,
+  getBrowser: GetBrowser,
   pelicula?: string,
   fecha?: string,
 ): Promise<CineResultado> {
-  const page = await browser.newPage({ userAgent: CHROME_UA, locale: "es-BO", viewport: { width: 1280, height: 900 } });
+  // `newPage` va DENTRO del try: ahora abrir el browser puede fallar (lanzamos
+  // Chrome recién acá) y ese fallo tiene que volver como ok:false, no como throw.
+  let page: Page | undefined;
   try {
+    const browser = await getBrowser();
+    page = await browser.newPage({ userAgent: CHROME_UA, locale: "es-BO", viewport: { width: 1280, height: 900 } });
     await page.goto(
       "https://www.multicine.com.bo/es-BO/buy-tickets?location=santa-cruz&locationKey=5",
       { waitUntil: "domcontentloaded", timeout: 30000 },
@@ -286,19 +314,22 @@ async function scrapeMulticine(
   } catch (e) {
     return { cine: "Multicine", ubicacion: UBICACIONES.multicine, ok: false, peliculas: [], error: String(e) };
   } finally {
-    await page.close();
+    await page?.close();
   }
 }
 
 // ---------------- CINE CENTER ----------------
 // `fecha` queda declarada y sin usar: la navegación por fecha es la Tarea 6.
 async function scrapeCineCenter(
-  browser: Browser,
+  getBrowser: GetBrowser,
   pelicula?: string,
   fecha?: string,
 ): Promise<CineResultado> {
-  const page = await browser.newPage({ userAgent: CHROME_UA, locale: "es-BO", viewport: { width: 1280, height: 900 } });
+  // Ver nota en scrapeMulticine: `newPage` dentro del try.
+  let page: Page | undefined;
   try {
+    const browser = await getBrowser();
+    page = await browser.newPage({ userAgent: CHROME_UA, locale: "es-BO", viewport: { width: 1280, height: 900 } });
     await page.goto("https://www.cinecenter.com.bo/Horarios", { waitUntil: "domcontentloaded", timeout: 30000 });
     // Blazor Server (SignalR): la cartelera llega server-side tras el handshake.
     await page.waitForTimeout(6500);
@@ -366,7 +397,7 @@ async function scrapeCineCenter(
   } catch (e) {
     return { cine: "Cine Center", ubicacion: UBICACIONES.cinecenter, ok: false, peliculas: [], error: String(e) };
   } finally {
-    await page.close();
+    await page?.close();
   }
 }
 
@@ -379,18 +410,38 @@ export interface GetCarteleraOpts {
   fecha?: string;
 }
 
-// Punto de entrada. Lanza UN Chrome headless y scrapea los cines pedidos en
-// paralelo (páginas independientes), luego cierra. ~6-9s típico.
+// Punto de entrada. Scrapea los cines pedidos en paralelo (páginas
+// independientes) y cierra el browser al final. ~6-9s típico con Playwright.
+//
+// Chrome se lanza PEREZOSAMENTE, solo si algún cine lo necesita: pedir únicamente
+// Cinemark con el BFF sano no toca Playwright en absoluto (~0.9s y cero procesos).
 export async function getCartelera(opts: GetCarteleraOpts = {}): Promise<CineResultado[]> {
   const cines = opts.cines?.length ? opts.cines : (["cinemark", "multicine", "cinecenter"] as CineNombre[]);
-  const browser = await chromium.launch({ headless: true, channel: "chrome" });
+
+  // Cacheamos la PROMESA, no el Browser ya resuelto: los adapters corren en
+  // paralelo y con `if (!browser)` dos de ellos entrarían antes de que el primer
+  // launch termine, lanzando dos Chrome y filtrando uno.
+  let browserPromise: Promise<Browser> | undefined;
+  const getBrowser: GetBrowser = () => {
+    browserPromise ??= chromium.launch({ headless: true, channel: "chrome" });
+    return browserPromise;
+  };
+
   try {
     const jobs: Promise<CineResultado>[] = [];
-    if (cines.includes("cinemark")) jobs.push(scrapeCinemark(browser, opts.pelicula, opts.fecha));
-    if (cines.includes("multicine")) jobs.push(scrapeMulticine(browser, opts.pelicula, opts.fecha));
-    if (cines.includes("cinecenter")) jobs.push(scrapeCineCenter(browser, opts.pelicula, opts.fecha));
+    if (cines.includes("cinemark")) jobs.push(scrapeCinemark(getBrowser, opts.pelicula, opts.fecha));
+    if (cines.includes("multicine")) jobs.push(scrapeMulticine(getBrowser, opts.pelicula, opts.fecha));
+    if (cines.includes("cinecenter")) jobs.push(scrapeCineCenter(getBrowser, opts.pelicula, opts.fecha));
     return await Promise.all(jobs);
   } finally {
-    await browser.close();
+    // Cerrar solo si se llegó a lanzar, y best-effort: un fallo al cerrar (o un
+    // launch que rechazó) no debe tumbar una respuesta ya armada.
+    if (browserPromise) {
+      try {
+        await (await browserPromise).close();
+      } catch {
+        /* ignorado a propósito */
+      }
+    }
   }
 }
