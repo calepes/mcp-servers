@@ -35,9 +35,18 @@ describe("parseShowtimes", () => {
     });
   });
 
-  it("ordena por hora ascendente", () => {
-    const horas = parseShowtimes(raw, fechaDelFixture).map((f) => f.hora);
-    expect(horas).toEqual([...horas].sort());
+  it("ordena por hora ascendente aunque el payload venga desordenado", () => {
+    // Sintético a propósito: el BFF real ya devuelve ordenado, así que con el
+    // fixture este test no podría fallar nunca.
+    const desordenado = {
+      data: [
+        { sessionDisplayDate: "2026-08-01", sessionDateTime: "2026-08-01T22:10:00.000Z", sessionFormat: "2D", theaterRoom: "3", language: { name: "Doblada" } },
+        { sessionDisplayDate: "2026-08-01", sessionDateTime: "2026-08-01T09:05:00.000Z", sessionFormat: "2D", theaterRoom: "1", language: { name: "Doblada" } },
+        { sessionDisplayDate: "2026-08-02", sessionDateTime: "2026-08-02T08:00:00.000Z", sessionFormat: "2D", theaterRoom: "2", language: { name: "Doblada" } },
+      ],
+    };
+    const fns = parseShowtimes(desordenado, "2026-08-01");
+    expect(fns.map((f) => f.hora)).toEqual(["09:05", "22:10"]);
   });
 
   it("tolera un payload vacío o sin data", () => {
