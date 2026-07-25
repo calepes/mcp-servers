@@ -1,0 +1,49 @@
+<!--
+  Fixture SINTÉTICO de la pantalla de confirmación de compra de Cinemark
+  (URL real: /order/{id}). Datos ficticios a propósito — NO son de una compra real.
+  Capturado/estructurado el 2026-07-24 de una compra real de prueba (Toy Story 5),
+  luego sanitizado: código de retiro, sala, asiento y película reemplazados por
+  valores de prueba. El markup replica la estructura real (clases MUI ofuscadas,
+  h1 "Confirmación de Compra", h4 "Código retiro", span con el código).
+
+  MARCADORES DE DETECCIÓN (para verificarPago / detectarPagoConfirmado):
+  - La URL cambia de /checkout a /order/{id}?transIdTemp=... (marcador MÁS fuerte).
+  - El body contiene el h1 "Confirmación de Compra" y el h4 "Código retiro".
+  - NO hay QR de ingreso: Cinemark entrega un CÓDIGO DE RETIRO alfanumérico
+    (se canjea en el cine o se recibe por correo). extraerEntradas saca ese código.
+-->
+<div class="MuiBox-root mui-root">
+  <p class="MuiTypography-root MuiTypography-body1 mui-mbobke">Confirmación de Compra</p>
+  <h1 class="MuiTypography-root MuiTypography-h1 mui-hw11u3">Confirmación de Compra</h1>
+  <p class="MuiTypography-root MuiTypography-body2">Aquí el detalle de tu compra</p>
+
+  <div class="MuiBox-root">
+    <h4 class="MuiTypography-root MuiTypography-h4">PELICULA DE PRUEBA (DOB · 2D)</h4>
+    <p class="MuiTypography-root MuiTypography-body2">VIE., 24 JUL · 21:40</p>
+    <h4 class="MuiTypography-root MuiTypography-h4 mui-1bilp8x">Sala 5</h4>
+    <p class="MuiTypography-root MuiTypography-body2">CINEMARK VENTURA MALL</p>
+  </div>
+
+  <div class="MuiBox-root">
+    <h4 class="MuiTypography-root MuiTypography-h4 mui-s09rls">Código retiro</h4>
+    <button class="MuiButtonBase-root">
+      <span class="MuiButton-icon"><svg viewBox="0 0 24 24"><g><path fill="currentColor"></path></g></svg></span>TESTCODE1<span class="MuiTouchRipple-root mui-w0"></span>
+    </button>
+  </div>
+
+  <div class="MuiBox-root">
+    <p class="MuiTypography-root MuiTypography-body2">ENTRADAS</p>
+    <p class="MuiTypography-root MuiTypography-body2">2D GENERAL OL BB</p>
+    <h4 class="MuiTypography-root MuiTypography-h4 mui-1ot1mzk">asiento X-99</h4>
+  </div>
+
+  <div class="MuiBox-root">
+    <p class="MuiTypography-root MuiTypography-body2">RESUMEN DE PAGO</p>
+    <p class="MuiTypography-root MuiTypography-body2">1 ENTRADA</p>
+    <p class="MuiTypography-root MuiTypography-body2">BS 65.00</p>
+    <p class="MuiTypography-root MuiTypography-body2">+ CARGO POR SERVICIO</p>
+    <p class="MuiTypography-root MuiTypography-body2">BS 5.20</p>
+    <p class="MuiTypography-root MuiTypography-body2">TOTAL EN DINERO</p>
+    <p class="MuiTypography-root MuiTypography-body2">BS 70.20</p>
+  </div>
+</div>
