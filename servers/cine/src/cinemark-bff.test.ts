@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { parseShowtimes } from "./cinemark-bff.js";
+import { parseShowtimes, fetchCartelera } from "./cinemark-bff.js";
 
 const raw = JSON.parse(
   readFileSync(new URL("./__fixtures__/bff-showtimes.json", import.meta.url), "utf8"),
@@ -52,5 +52,53 @@ describe("parseShowtimes", () => {
   it("tolera un payload vacío o sin data", () => {
     expect(parseShowtimes({ data: [] }, fechaDelFixture)).toEqual([]);
     expect(parseShowtimes({}, fechaDelFixture)).toEqual([]);
+  });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("fetchCartelera", () => {
+  it("cruza movies con showtimes y devuelve solo películas con funciones ese día", async () => {
+    const fecha = fechaDelFixture;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/movies")) {
+        return new Response(JSON.stringify({
+          data: [
+            { corporateId: "110600", title: "LA ODISEA", status: "SHOWING_NOW" },
+            { corporateId: "999999", title: "PELI SIN FUNCIONES", status: "PRESALE" },
+          ],
+        }));
+      }
+      if (url.includes("movieCorporateId=110600")) return new Response(JSON.stringify(raw));
+      return new Response(JSON.stringify({ data: [] }));
+    }));
+
+    const pelis = await fetchCartelera(fecha);
+    expect(pelis.map((p) => p.titulo)).toEqual(["LA ODISEA"]);
+    expect(pelis[0].funciones.length).toBeGreaterThan(0);
+  });
+
+  it("filtra por título cuando se pide una película", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/movies")) {
+        return new Response(JSON.stringify({
+          data: [{ corporateId: "110600", title: "LA ODISEA", status: "SHOWING_NOW" }],
+        }));
+      }
+      return new Response(JSON.stringify(raw));
+    }));
+
+    expect(await fetchCartelera(fechaDelFixture, "odisea")).toHaveLength(1);
+    expect(await fetchCartelera(fechaDelFixture, "batman")).toHaveLength(0);
+  });
+
+  it("lanza si el BFF no responde 200 (para que el caller haga fallback)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
+    await expect(fetchCartelera(fechaDelFixture)).rejects.toThrow(/403/);
+  });
+
+  it("lanza si la red falla", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNRESET"); }));
+    await expect(fetchCartelera(fechaDelFixture)).rejects.toThrow();
   });
 });
