@@ -401,7 +401,7 @@ async function scrapeCineCenter(
           cine: "Cine Center",
           ubicacion: UBICACIONES.cinecenter,
           ok: false,
-          error: `No encontré la pestaña de la fecha ${fecha} (Cine Center muestra ~15 días).`,
+          error: `No encontré la pestaña de la fecha ${fecha} (Cine Center muestra ~12 días).`,
           peliculas: [],
         };
       }
