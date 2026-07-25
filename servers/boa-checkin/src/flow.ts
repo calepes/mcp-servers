@@ -1,7 +1,11 @@
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Page, Frame } from "playwright";
 import type { BoaTraveler } from "./travelers.js";
 import { missingBoaFields } from "./missing-fields.js";
 import { lookupAirportName, type WalletPassData } from "./wallet-pass.js";
+import { pickJourney, type JourneyEstado, type JourneyInfo } from "./journeys.js";
 
 /**
  * `page.frame()` es sincrónico y devuelve null si el <iframe> todavía no se
@@ -52,7 +56,7 @@ export async function searchBoaReservation(
   await page.getByRole("button", { name: /Start Check-in.*Iniciar/i }).click();
 
   await (await waitForAmadeusFrame(page))
-    .getByText(/Your journey|Choose how to get your boarding passes|Required information/i)
+    .getByText(/Your journey|Choose how to get your boarding passes|Required information|Manage your booking/i)
     .first()
     .waitFor({ timeout: 20000 });
 }
@@ -79,16 +83,51 @@ function extractPassengerName(rowText: string): string | null {
 }
 
 /**
- * Si la reserva tiene más de un tramo (ida y vuelta, o multi-destino), BoA
- * muestra una pantalla "Your journeys" con una tarjeta <refx-journey-summary-
- * card-cont> por tramo — solo los tramos con check-in abierto tienen botón
- * "Check in" (los que todavía no abrieron muestran "Check-in opens in ..." sin
- * botón). Hay que entrar al tramo correcto ANTES de llegar a la lista de
- * pasajeros, o `listBoaPassengers` no encuentra nada (bug real 2026-07-04:
- * devolvía `pasajeros: []` en silencio en vez de fallar). Reservas de un solo
- * tramo saltan directo a "Who is checking in?" y esta función no hace nada.
+ * Escanea las tarjetas <refx-journey-summary-card-cont> de "Your journeys".
+ * Cada tarjeta tiene TRES estados (bug real 2026-07-20, ver journeys.ts):
+ * "Check in" (abierto), "Manage check-in" (ya checkeado), o ninguno de los
+ * dos ("Check-in opens in ..." — todavía no abre).
  */
-export async function selectJourney(page: Page, tramo?: string): Promise<void> {
+async function scanJourneys(
+  frame: Frame,
+): Promise<{ card: import("playwright").Locator; info: JourneyInfo }[]> {
+  const cards = frame.locator("refx-journey-summary-card-cont");
+  const count = await cards.count();
+  const out: { card: import("playwright").Locator; info: JourneyInfo }[] = [];
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const titulo = (await card.locator("h3.journey-title").innerText().catch(() => "")).trim();
+    let estado: JourneyEstado = "noAbierto";
+    if ((await card.getByRole("button", { name: "Check in", exact: true }).count()) > 0) {
+      estado = "abierto";
+    } else if ((await card.getByRole("button", { name: "Manage check-in", exact: true }).count()) > 0) {
+      estado = "checkeado";
+    }
+    out.push({ card, info: { titulo, estado } });
+  }
+  return out;
+}
+
+export interface SelectJourneyResult {
+  /** true si el tramo elegido YA estaba checkeado — la página queda en "Manage your booking". */
+  yaCheckeado: boolean;
+}
+
+/**
+ * Si la reserva tiene más de un tramo (ida y vuelta, o multi-destino), BoA
+ * muestra una pantalla "Your journeys" con una tarjeta por tramo. Hay que
+ * entrar al tramo correcto ANTES de llegar a la lista de pasajeros, o
+ * `listBoaPassengers` no encuentra nada (bug real 2026-07-04: devolvía
+ * `pasajeros: []` en silencio en vez de fallar). Reservas de un solo tramo
+ * saltan directo a "Who is checking in?" y esta función no hace nada.
+ *
+ * Si el tramo elegido YA está checkeado (bug real 2026-07-20: antes esto
+ * fallaba con el mensaje FALSO "el check-in todavía no está abierto"), entra
+ * por "Manage check-in" y devuelve { yaCheckeado: true } para que el caller
+ * siga por el camino de "Manage your booking" (boarding pass / asiento) en
+ * vez de intentar un check-in nuevo.
+ */
+export async function selectJourney(page: Page, tramo?: string): Promise<SelectJourneyResult> {
   const frame = await waitForAmadeusFrame(page);
   // El wait previo en searchBoaReservation ya confirmó que ALGUNO de los
   // textos esperados apareció ("Your journey(s)" incluido) — acá solo hace
@@ -97,58 +136,32 @@ export async function selectJourney(page: Page, tramo?: string): Promise<void> {
     frame.getByRole("heading", { level: 1, name: "Your journeys" }),
     2000,
   );
-  if (!onJourneysScreen) return;
-
-  const cards = frame.locator("refx-journey-summary-card-cont");
-  const count = await cards.count();
-  const journeys: { card: import("playwright").Locator; titulo: string; abierto: boolean }[] = [];
-  for (let i = 0; i < count; i++) {
-    const card = cards.nth(i);
-    const titulo = (await card.locator("h3.journey-title").innerText().catch(() => "")).trim();
-    const abierto = (await card.getByRole("button", { name: "Check in", exact: true }).count()) > 0;
-    journeys.push({ card, titulo, abierto });
+  if (!onJourneysScreen) {
+    // Reserva de UN solo tramo: BoA salta "Your journeys". Si ese único tramo
+    // ya está checkeado, el widget aterriza directo en "Manage your booking"
+    // (warning del daemon-health-reviewer 2026-07-20: sin este chequeo, el
+    // caso single-tramo checkeado caía al flujo de check-in nuevo sobre una
+    // pantalla equivocada y moría en timeout). Chequeo corto — si no aparece,
+    // es un check-in nuevo normal.
+    const onManageScreen = await waitVisible(
+      frame.getByRole("heading", { name: "Manage your booking" }),
+      1500,
+    );
+    return { yaCheckeado: onManageScreen };
   }
 
-  const abiertos = journeys.filter((j) => j.abierto);
-  let elegido: (typeof abiertos)[number] | undefined;
-  if (tramo) {
-    // Match exacto primero (case-insensitive) — evita que un substring corto
-    // ("Santa Cruz") quede ambiguo entre "Santa Cruz to La Paz" y "La Paz to
-    // Santa Cruz" (AMBOS lo contienen). Si no hay exacto, substring — pero si
-    // matchea más de un tramo, error explícito en vez de tomar el primero
-    // silenciosamente (bug real: `.find()` tomaba el primer match "por
-    // suerte" según el orden de las cards, sin avisar si algún día cambiaba).
-    const exact = abiertos.find((j) => j.titulo.toLowerCase() === tramo.toLowerCase());
-    if (exact) {
-      elegido = exact;
-    } else {
-      const matches = abiertos.filter((j) => j.titulo.toLowerCase().includes(tramo.toLowerCase()));
-      if (matches.length > 1) {
-        throw new Error(
-          `\`tramo\` ("${tramo}") es ambiguo — matchea ${matches.length} tramos abiertos. Usá el título COMPLETO tal como aparece acá: ${matches
-            .map((j) => j.titulo)
-            .join(" | ")}`,
-        );
-      }
-      elegido = matches[0];
-    }
-  }
-  if (!elegido) {
-    if (abiertos.length === 1) {
-      elegido = abiertos[0];
-    } else if (abiertos.length === 0) {
-      throw new Error(
-        `El check-in todavía no está abierto para ningún tramo de esta reserva. Tramos: ${journeys
-          .map((j) => j.titulo)
-          .join(" | ")}`,
-      );
-    } else {
-      throw new Error(
-        `La reserva tiene ${abiertos.length} tramos con check-in abierto — especificá cuál con el parámetro \`tramo\` usando el título COMPLETO. Abiertos: ${abiertos
-          .map((j) => j.titulo)
-          .join(" | ")}`,
-      );
-    }
+  const journeys = await scanJourneys(frame);
+  const pick = pickJourney(
+    journeys.map((j) => j.info),
+    tramo,
+    ["abierto", "checkeado"],
+  );
+  const elegido = journeys[pick.index];
+
+  if (pick.estado === "checkeado") {
+    await elegido.card.getByRole("button", { name: "Manage check-in", exact: true }).click();
+    await frame.getByRole("heading", { name: "Manage your booking" }).waitFor({ timeout: 15000 });
+    return { yaCheckeado: true };
   }
 
   await elegido.card.getByRole("button", { name: "Check in", exact: true }).click();
@@ -156,6 +169,7 @@ export async function selectJourney(page: Page, tramo?: string): Promise<void> {
     .getByText(/Who is checking in|Choose how to get your boarding passes|Required information/i)
     .first()
     .waitFor({ timeout: 20000 });
+  return { yaCheckeado: false };
 }
 
 /**
@@ -335,53 +349,15 @@ async function openManageBooking(frame: Frame, tramo?: string): Promise<void> {
   );
   if (!onJourneysScreen) return; // reserva de un solo tramo: ya está en "Manage your booking"
 
-  const cards = frame.locator("refx-journey-summary-card-cont");
-  const count = await cards.count();
-  const journeys: { card: import("playwright").Locator; titulo: string; checkeado: boolean }[] = [];
-  for (let i = 0; i < count; i++) {
-    const card = cards.nth(i);
-    const titulo = (await card.locator("h3.journey-title").innerText().catch(() => "")).trim();
-    const checkeado = (await card.getByRole("button", { name: "Manage check-in", exact: true }).count()) > 0;
-    journeys.push({ card, titulo, checkeado });
-  }
-
-  const checkeados = journeys.filter((j) => j.checkeado);
-  let elegido: (typeof checkeados)[number] | undefined;
-  if (tramo) {
-    const exact = checkeados.find((j) => j.titulo.toLowerCase() === tramo.toLowerCase());
-    if (exact) {
-      elegido = exact;
-    } else {
-      const matches = checkeados.filter((j) => j.titulo.toLowerCase().includes(tramo.toLowerCase()));
-      if (matches.length > 1) {
-        throw new Error(
-          `\`tramo\` ("${tramo}") es ambiguo — matchea ${matches.length} tramos checkeados. Usá el título COMPLETO tal como aparece acá: ${matches
-            .map((j) => j.titulo)
-            .join(" | ")}`,
-        );
-      }
-      elegido = matches[0];
-    }
-  }
-  if (!elegido) {
-    if (checkeados.length === 1) {
-      elegido = checkeados[0];
-    } else if (checkeados.length === 0) {
-      throw new Error(
-        `Ningún tramo de esta reserva tiene el check-in hecho todavía. Tramos: ${journeys
-          .map((j) => j.titulo)
-          .join(" | ")}`,
-      );
-    } else {
-      throw new Error(
-        `La reserva tiene ${checkeados.length} tramos con check-in hecho — especificá cuál con \`tramo\`. Ya checkeados: ${checkeados
-          .map((j) => j.titulo)
-          .join(" | ")}`,
-      );
-    }
-  }
-
-  await elegido.card.getByRole("button", { name: "Manage check-in", exact: true }).click();
+  const journeys = await scanJourneys(frame);
+  const pick = pickJourney(
+    journeys.map((j) => j.info),
+    tramo,
+    ["checkeado"],
+  );
+  await journeys[pick.index].card
+    .getByRole("button", { name: "Manage check-in", exact: true })
+    .click();
   await frame.getByRole("heading", { name: "Manage your booking" }).waitFor({ timeout: 15000 });
 }
 
@@ -547,6 +523,52 @@ export async function setFrequentFlyer(
   }
 }
 
+/**
+ * Cambia el asiento estando YA parado en "Manage your booking" (sin volver a
+ * navegar desde "Your journeys") — usado por el camino idempotente de
+ * `confirmBoaCheckin` cuando el tramo ya quedó checkeado (bug real 2026-07-20:
+ * `prepareBoaCheckin` ejecuta el check-in real del lado de Amadeus, así que el
+ * confirm posterior encuentra el tramo checkeado y debe AJUSTAR el asiento en
+ * vez de repetir un check-in que ya no existe). No-op si el asiento pedido ya
+ * es el actual.
+ */
+export async function changeSeatFromManage(
+  page: Page,
+  seatCode: string,
+): Promise<{ cambiado: boolean; asiento: string }> {
+  const frame = await waitForAmadeusFrame(page);
+  // Guard multi-pax (blocking del daemon-health-reviewer, 2026-07-20): este
+  // camino no selecciona pasajero — readSeatMap lee "el primero seleccionado"
+  // y con 2+ pasajeros podría cambiarle el asiento a la persona equivocada
+  // (misma clase de bug silencioso que el boarding pass multi-pax del
+  // 2026-07-04). Una fila por pasajero en "Manage your booking" = el botón de
+  // frequent flyer (patrón ya validado en setFrequentFlyer). Si hay más de
+  // una, error honesto en vez de un cambio a ciegas.
+  const paxCount = await frame
+    .getByRole("listitem")
+    .filter({ hasText: /frequent flyer information/i })
+    .count();
+  if (paxCount > 1) {
+    throw new Error(
+      `La reserva tiene ${paxCount} pasajeros checkeados y el cambio de asiento post-checkin todavía no puede elegir a cuál aplicarlo — riesgo de cambiar el asiento equivocado. Hacelo desde la web/app de BoA por ahora.`,
+    );
+  }
+  await frame.getByRole("link", { name: "Change seats", exact: false }).click();
+  const opciones = await readSeatMap(frame);
+  if (opciones.preseleccionado === seatCode) {
+    // Ya está en ese asiento: confirmar sin tocar nada para volver a "Manage".
+    await confirmSeatAndContinue(page);
+    return { cambiado: false, asiento: seatCode };
+  }
+  if (!opciones.alternativas.includes(seatCode)) {
+    throw new Error(
+      `El asiento ${seatCode} no está libre en este tramo. Actual: ${opciones.preseleccionado ?? "desconocido"}. Libres: ${opciones.alternativas.join(", ") || "ninguno"}.`,
+    );
+  }
+  await confirmSeatAndContinue(page, seatCode);
+  return { cambiado: true, asiento: seatCode };
+}
+
 /** Elige un asiento específico (si se pasa) o confirma el preseleccionado, y sigue. */
 export async function confirmSeatAndContinue(page: Page, seatCode?: string): Promise<void> {
   const frame = await waitForAmadeusFrame(page);
@@ -663,4 +685,32 @@ export async function getAllBoardingPasses(page: Page): Promise<{ nombre: string
     resultado.push({ nombre, url });
   }
   return resultado;
+}
+
+/**
+ * Captura screenshot + texto de la pantalla actual a tmpdir para diagnóstico
+ * post-mortem de una falla (P1 de la auditoría 2026-07-20: cada bug real de
+ * este MCP requirió reproducir a mano porque los timeouts de Playwright no
+ * dicen QUÉ había en pantalla). Best-effort: nunca tira — devuelve los paths
+ * escritos o null si ni siquiera se pudo capturar.
+ */
+export async function captureDiagnostics(
+  page: Page,
+  etiqueta: string,
+): Promise<{ screenshotPath: string; textPath: string } | null> {
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const base = join(tmpdir(), `boa-diag-${etiqueta}-${stamp}`);
+    const screenshotPath = `${base}.png`;
+    const textPath = `${base}.txt`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    const frame = page.frame({ name: "responseFrame" });
+    const text = frame
+      ? await frame.locator("body").innerText().catch(() => "")
+      : await page.locator("body").innerText().catch(() => "");
+    writeFileSync(textPath, `URL: ${page.url()}\n\n${text}`);
+    return { screenshotPath, textPath };
+  } catch {
+    return null;
+  }
 }

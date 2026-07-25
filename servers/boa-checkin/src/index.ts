@@ -14,6 +14,7 @@ import {
   type BoaPasaporte,
 } from "./travelers.js";
 import { missingBoaFields } from "./missing-fields.js";
+import type { Page } from "playwright";
 import {
   searchBoaReservation,
   selectJourney,
@@ -25,8 +26,11 @@ import {
   getBoardingPassForJourney,
   setFrequentFlyer,
   confirmSeatAndContinue,
+  changeSeatFromManage,
   getBoardingPassUrl,
+  getAllBoardingPasses,
   getWalletPassScrapeData,
+  captureDiagnostics,
 } from "./flow.js";
 import { decodeBoardingPassBarcode, parseBcbpEssentials } from "./wallet-pdf417.js";
 import { loadWalletPassConfig, signAndPackagePass, lookupAirportName } from "./wallet-pass.js";
@@ -60,6 +64,48 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = chain.catch(() => {}).then(fn);
   chain = run.catch(() => {});
   return run;
+}
+
+/**
+ * Abre la sesión de Chrome, corre `fn`, y si algo falla captura screenshot +
+ * texto de la pantalla a tmpdir ANTES de cerrar el browser, adjuntando los
+ * paths al mensaje de error (auditoría 2026-07-20: todos los bugs reales de
+ * este MCP requirieron reproducción manual porque el timeout de Playwright no
+ * dice qué había en pantalla). La captura es best-effort — nunca enmascara el
+ * error original.
+ */
+async function withBoaSession<T>(toolName: string, fn: (page: Page) => Promise<T>): Promise<T> {
+  const session = await openBoaBrowserSession();
+  try {
+    return await fn(session.page);
+  } catch (err) {
+    const diag = await captureDiagnostics(session.page, toolName);
+    if (diag) {
+      (err as Error).message += ` [diagnóstico: ${diag.screenshotPath} · ${diag.textPath}]`;
+    }
+    throw err;
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Post-condición de asiento (lección 2026-07-13, tercera aparición del patrón
+ * "ok:true sin verificar"): leer el asiento REAL del PDF ya emitido, vía el
+ * BCBP del código de barras — la única fuente que refleja lo que persistió el
+ * backend de Amadeus. Best-effort: null si no se pudo verificar (no rompe la
+ * entrega del boarding pass por una falla de verificación).
+ */
+async function verifySeatFromPdf(url: string, locatorCode: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const pdf = Buffer.from(await res.arrayBuffer());
+    const bcbp = await decodeBoardingPassBarcode(pdf);
+    return parseBcbpEssentials(bcbp, locatorCode).seat || null;
+  } catch {
+    return null;
+  }
 }
 
 interface PrepareArgs {
@@ -113,11 +159,24 @@ async function prepareBoaCheckin(args: PrepareArgs) {
     }
   }
 
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    await selectJourney(session.page, args.tramo);
-    const passengers = await listBoaPassengers(session.page);
+  return withBoaSession("prepare", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    const sel = await selectJourney(page, args.tramo);
+    if (sel.yaCheckeado) {
+      // Bug real 2026-07-20: prepareBoaCheckin EJECUTA el check-in del lado de
+      // Amadeus (ver description de la tool) — un prepare abandonado deja el
+      // tramo checkeado, y antes este caso fallaba con el mensaje falso "el
+      // check-in todavía no está abierto". Ahora se reporta la verdad y se
+      // devuelven los boarding passes ya emitidos.
+      const pases = await getAllBoardingPasses(page);
+      return asText({
+        yaCheckeado: true,
+        mensaje:
+          "Este tramo YA tiene el check-in hecho — no hay nada que preparar. Adjunto los boarding passes emitidos. Para cambiar un asiento, usar confirmBoaCheckin con `asientos` o manageBoaSeat.",
+        boardingPasses: pases.map((p) => ({ nombre: p.nombre, boardingPassUrl: p.url })),
+      });
+    }
+    const passengers = await listBoaPassengers(page);
     if (passengers.length === 0) {
       throw new Error(
         "BoA no devolvió ningún pasajero para esta reserva/tramo — revisar locator/apellido, o si el tramo elegido es el correcto.",
@@ -150,26 +209,54 @@ async function prepareBoaCheckin(args: PrepareArgs) {
     }
 
     // Todos listos: pasar la selección de pasajeros/declaración y avanzar hasta el mapa de asientos.
-    await advancePastPassengerSelection(session.page);
+    await advancePastPassengerSelection(page);
     const asientos: Record<string, unknown> = {};
     for (const s of statuses) {
       if (s.yaCheckeado) continue;
       const traveler = resolveBoaTraveler(TRAVELERS_PATH, s.nombre.split(" ")[0])!;
-      await fillRequiredInfo(session.page, traveler);
-      asientos[s.nombre] = await getSeatOptions(session.page);
+      await fillRequiredInfo(page, traveler);
+      asientos[s.nombre] = await getSeatOptions(page);
     }
     return asText({ pasajeros: statuses, asientos });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 async function confirmBoaCheckin(args: ConfirmArgs) {
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    await selectJourney(session.page, args.tramo);
-    const passengers = await listBoaPassengers(session.page);
+  return withBoaSession("confirm", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    const sel = await selectJourney(page, args.tramo);
+
+    if (sel.yaCheckeado) {
+      // Camino idempotente (bug real 2026-07-20): el check-in ya quedó hecho —
+      // típicamente por el prepareBoaCheckin previo de esta misma conversación,
+      // que ejecuta el check-in real del lado de Amadeus con el asiento
+      // preseleccionado. Acá solo queda ajustar el asiento si se pidió uno
+      // distinto, y devolver los boarding passes emitidos.
+      const pedidos = Object.entries(args.asientos ?? {});
+      if (pedidos.length > 1) {
+        throw new Error(
+          "El camino post-checkin solo soporta cambiar UN asiento por llamada (la pantalla de BoA no permite elegir pasajero) — pedí los cambios de a uno.",
+        );
+      }
+      const ajustes: Record<string, { cambiado: boolean; asiento: string }> = {};
+      for (const [nombre, asiento] of pedidos) {
+        // changeSeatFromManage además valida que la reserva tenga UN solo
+        // pasajero checkeado (guard multi-pax — ver flow.ts).
+        ajustes[nombre] = await changeSeatFromManage(page, asiento);
+      }
+      const pases = await getAllBoardingPasses(page);
+      const resultados: { nombre: string; boardingPassUrl: string; asientoVerificado: string | null }[] = [];
+      for (const p of pases) {
+        resultados.push({
+          nombre: p.nombre,
+          boardingPassUrl: p.url,
+          asientoVerificado: await verifySeatFromPdf(p.url, args.locator),
+        });
+      }
+      return asText({ yaCheckeado: true, pasajeros: resultados });
+    }
+
+    const passengers = await listBoaPassengers(page);
     if (passengers.length === 0) {
       throw new Error(
         "BoA no devolvió ningún pasajero para esta reserva/tramo — revisar locator/apellido, o si el tramo elegido es el correcto.",
@@ -184,23 +271,32 @@ async function confirmBoaCheckin(args: ConfirmArgs) {
       );
     }
 
-    await advancePastPassengerSelection(session.page);
-    const resultados: { nombre: string; boardingPassUrl: string }[] = [];
+    await advancePastPassengerSelection(page);
+    const resultados: { nombre: string; boardingPassUrl: string; asientoPedido?: string; asientoVerificado?: string | null }[] = [];
     for (const p of filtered) {
       if (!p.yaCheckeado) {
         const traveler = resolveBoaTraveler(TRAVELERS_PATH, p.nombre.split(" ")[0]);
         if (!traveler) throw new Error(`Viajero "${p.nombre}" no está en datos-viaje.json`);
-        await fillRequiredInfo(session.page, traveler);
-        await getSeatOptions(session.page);
-        await confirmSeatAndContinue(session.page, args.asientos?.[p.nombre]);
+        await fillRequiredInfo(page, traveler);
+        await getSeatOptions(page);
+        await confirmSeatAndContinue(page, args.asientos?.[p.nombre]);
       }
-      const url = await getBoardingPassUrl(session.page, p.nombre);
-      resultados.push({ nombre: p.nombre, boardingPassUrl: url });
+      const url = await getBoardingPassUrl(page, p.nombre);
+      const pedido = args.asientos?.[p.nombre];
+      if (pedido) {
+        // Post-condición: verificar contra el PDF real que el asiento pedido persistió.
+        resultados.push({
+          nombre: p.nombre,
+          boardingPassUrl: url,
+          asientoPedido: pedido,
+          asientoVerificado: await verifySeatFromPdf(url, args.locator),
+        });
+      } else {
+        resultados.push({ nombre: p.nombre, boardingPassUrl: url });
+      }
     }
     return asText({ pasajeros: resultados });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 /**
@@ -211,18 +307,15 @@ async function confirmBoaCheckin(args: ConfirmArgs) {
  * Cal y confirmar el código elegido ANTES de volver a llamar con `asiento`.
  */
 async function manageBoaSeat(args: SeatChangeArgs) {
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    const opciones = await openSeatChangeForJourney(session.page, args.tramo);
+  return withBoaSession("seat", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    const opciones = await openSeatChangeForJourney(page, args.tramo);
     if (!args.asiento) {
       return asText({ actual: opciones.preseleccionado, alternativas: opciones.alternativas });
     }
-    await confirmSeatAndContinue(session.page, args.asiento);
+    await confirmSeatAndContinue(page, args.asiento);
     return asText({ actualizado: true, nuevoAsiento: args.asiento });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 /**
@@ -236,14 +329,11 @@ async function manageBoaSeat(args: SeatChangeArgs) {
  * (ver `getAllBoardingPasses` en flow.ts).
  */
 async function getBoaBoardingPass(args: BoardingPassArgs) {
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    const pases = await getBoardingPassForJourney(session.page, args.tramo);
+  return withBoaSession("boardingpass", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    const pases = await getBoardingPassForJourney(page, args.tramo);
     return asText({ boardingPasses: pases.map((p) => ({ nombre: p.nombre, boardingPassUrl: p.url })) });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 /**
@@ -252,14 +342,11 @@ async function getBoaBoardingPass(args: BoardingPassArgs) {
  * getBoaBoardingPass): Cal pidió agregar su número y no había tool para eso.
  */
 async function setBoaFrequentFlyer(args: FrequentFlyerArgs) {
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    await setFrequentFlyer(session.page, args.numero, { tramo: args.tramo, pasajero: args.pasajero });
+  return withBoaSession("frequentflyer", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    await setFrequentFlyer(page, args.numero, { tramo: args.tramo, pasajero: args.pasajero });
     return asText({ actualizado: true, numero: args.numero });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 /**
@@ -272,10 +359,9 @@ async function setBoaFrequentFlyer(args: FrequentFlyerArgs) {
 async function generateBoaWalletPass(args: WalletPassArgs) {
   const config = loadWalletPassConfig(); // tira error explícito y ANTES de tocar el browser si falta config
 
-  const session = await openBoaBrowserSession();
-  try {
-    await searchBoaReservation(session.page, args.locator, args.apellido);
-    const pases = await getBoardingPassForJourney(session.page, args.tramo);
+  return withBoaSession("walletpass", async (page) => {
+    await searchBoaReservation(page, args.locator, args.apellido);
+    const pases = await getBoardingPassForJourney(page, args.tramo);
     const targetPass = args.pasajero
       ? pases.find((p) => p.nombre.toLowerCase().includes(args.pasajero!.toLowerCase()))
       : pases[0];
@@ -285,7 +371,7 @@ async function generateBoaWalletPass(args: WalletPassArgs) {
       );
     }
 
-    const scrapeData = await getWalletPassScrapeData(session.page, args.locator, args.tramo, targetPass.nombre);
+    const scrapeData = await getWalletPassScrapeData(page, args.locator, args.tramo, targetPass.nombre);
 
     let pdfRes: Response;
     try {
@@ -334,9 +420,7 @@ async function generateBoaWalletPass(args: WalletPassArgs) {
     writeFileSync(cardImagePath, cardImageBuffer);
 
     return asText({ pasajero: targetPass.nombre, pkpassPath, cardImagePath });
-  } finally {
-    await session.close();
-  }
+  });
 }
 
 const server = new Server(
@@ -349,7 +433,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "prepareBoaCheckin",
       description:
-        "Busca una reserva de BoA (Boliviana de Aviación) por locator+apellido y prepara el check-in de todos sus pasajeros (o el subconjunto en `pasajeros`). Si la reserva tiene más de un tramo (ida y vuelta, multi-destino), BoA pide elegir cuál — pasá `tramo` (título COMPLETO, ej. 'Santa Cruz to La Paz', no solo la ciudad: en un ida-y-vuelta AMBOS tramos suelen mencionar la misma ciudad, así que una ciudad sola es ambigua) para desambiguar; si hay un solo tramo con check-in abierto se usa automáticamente, y si no se especifica y hay ambigüedad la tool tira error listando las opciones con sus títulos completos — usá ESE texto literal en el siguiente llamado. IMPORTANTE si hay 2+ tramos: esta tool YA avanza hasta selección de asiento en el sitio de BoA (deja un hold temporal), así que hay que procesar UN TRAMO COMPLETO por vez — prepare→mostrar a Cal→confirmBoaCheckin de ESE tramo, recién DESPUÉS pasar al siguiente. Nunca llames esta tool en paralelo ni dos veces seguidas para tramos distintos sin confirmar el primero: puede dejar la reserva bloqueada del lado de BoA (incidente real 2026-07-12, tardó horas en liberarse). Rellena datos personales/pasaporte desde datos-viaje.json. Devuelve por pasajero { nombre, yaCheckeado, faltantes } y, si a todos no les falta nada, además los asientos preseleccionados/alternativas. Si faltan datos, pedíselos a Cal y volvé a llamar esta tool pasando `datosAdicionales` con las respuestas — se guardan para la próxima vez.",
+        "Busca una reserva de BoA (Boliviana de Aviación) por locator+apellido y avanza el check-in de todos sus pasajeros (o el subconjunto en `pasajeros`) hasta el mapa de asientos. ⚠️ OJO: esta tool EJECUTA el check-in real del lado de BoA/Amadeus — al pasar la pantalla de información requerida, el pasajero QUEDA CHECKEADO con el asiento preseleccionado, aunque nunca se llame confirmBoaCheckin (confirmado con reserva real 2026-07-20). confirmBoaCheckin después solo ajusta el asiento y trae el boarding pass. Por eso: NUNCA la llames en paralelo ni para dos tramos sin confirmar el primero, y si el resultado siguiente dice que el tramo 'ya está checkeado', eso es lo esperado (no un error). Si el tramo YA está checkeado, devuelve { yaCheckeado: true, boardingPasses } directamente. Si la reserva tiene más de un tramo (ida y vuelta, multi-destino), pasá `tramo` (título COMPLETO, ej. 'Santa Cruz to La Paz', no solo la ciudad — en un ida-y-vuelta ambos tramos mencionan la misma ciudad); si hay ambigüedad la tool tira error listando cada tramo con su ESTADO real (abierto / ya hecho / todavía no abre) — usá ese texto literal. Rellena datos personales/pasaporte desde datos-viaje.json. Devuelve por pasajero { nombre, yaCheckeado, faltantes } y, si no falta nada, los asientos preseleccionados/alternativas. Si faltan datos, pedíselos a Cal y volvé a llamar con `datosAdicionales` — se guardan para la próxima vez.",
       inputSchema: {
         type: "object",
         properties: {
@@ -366,7 +450,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "confirmBoaCheckin",
       description:
-        "Confirma el check-in (asientos + submit) de los pasajeros de una reserva ya preparada con prepareBoaCheckin, y devuelve la URL pública del boarding pass de cada uno (para mandar con sendDocument). Mismo parámetro `tramo` que prepareBoaCheckin (título COMPLETO, ej. 'Santa Cruz to La Paz' — no solo la ciudad) si la reserva tiene varios tramos abiertos. Llamala INMEDIATAMENTE después del prepareBoaCheckin de ese mismo tramo, antes de tocar cualquier otro tramo de la reserva. `asientos` es opcional: { [nombre]: 'código de asiento' } para pisar el preseleccionado de alguien puntual.",
+        "Cierra el check-in iniciado con prepareBoaCheckin: aplica los asientos pedidos y devuelve la URL pública del boarding pass de cada pasajero (para mandar con sendDocument). Es IDEMPOTENTE: como prepareBoaCheckin ya deja al pasajero checkeado del lado de BoA (con el asiento preseleccionado), si al reentrar el tramo aparece como ya checkeado esta tool NO falla — cambia el asiento si `asientos` pide uno distinto del actual (solo reservas de UN pasajero; con varios tira error explícito) y devuelve los boarding passes igual, con { yaCheckeado: true }. Los resultados incluyen `asientoVerificado`: el asiento leído del BCBP del PDF real emitido (verificación post-condición). Si difiere del pedido, avisale a Cal en vez de asumir que quedó; si es null significa 'no se pudo verificar' (NO un mismatch — no lo reportes como error). Mismo parámetro `tramo` que prepareBoaCheckin (título COMPLETO, ej. 'Santa Cruz to La Paz' — no solo la ciudad) si la reserva tiene varios tramos. Llamala INMEDIATAMENTE después del prepareBoaCheckin de ese mismo tramo, antes de tocar cualquier otro tramo. `asientos` es opcional: { [nombre]: 'código de asiento' } para pisar el preseleccionado.",
       inputSchema: {
         type: "object",
         properties: {
