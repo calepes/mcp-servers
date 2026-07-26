@@ -71,9 +71,16 @@ export async function startCineHttpServer(
     void handleMcpRequest(req, res);
   });
 
-  await new Promise<void>((resolve) => {
-    httpServer.listen(opts.port, opts.host ?? "127.0.0.1", resolve);
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(opts.port, opts.host ?? "127.0.0.1", () => {
+      httpServer.off("error", reject);
+      resolve();
+    });
   });
+  // Errores post-arranque (ej. ECONNRESET de un socket individual) no deben
+  // tirar una excepción no capturada — loguear y seguir vivo.
+  httpServer.on("error", (err) => console.error("[cine-http] server error:", err));
 
   return {
     httpServer,
