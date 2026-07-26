@@ -141,6 +141,13 @@ if (isMain) {
     console.error(`[cine-http] CINE_MCP_PORT inválido: "${portEnv}"`);
     process.exit(1);
   }
-  await startCineHttpServer({ port, host: "127.0.0.1" });
-  console.error(`[cine-http] escuchando en http://127.0.0.1:${port}/mcp`);
+  try {
+    await startCineHttpServer({ port, host: "127.0.0.1" });
+    console.error(`[cine-http] escuchando en http://127.0.0.1:${port}/mcp`);
+  } catch (err) {
+    console.error(
+      `[cine-http] no pude arrancar: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
 }
