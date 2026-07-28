@@ -71,15 +71,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "getWorkouts",
       description:
-        "Workouts registrados en Apple Health. Devuelve tipo raw (Tennis, Running, Functional Strength Training, etc.), duración en minutos, calorías activas, FC promedio y máxima, y categoría agrupada (cardio|strength|walk|flexibility|other). Args: { days?: int (default 7), category?: 'cardio'|'strength'|'walk'|'flexibility'|'other' }.",
+        "Workouts registrados en Apple Health. Devuelve tipo raw (Tennis, Running, Functional Strength Training, etc.), duración en minutos, calorías activas, FC promedio y máxima, y categoría agrupada (cardio|strength|racquet|walk|flexibility|other). Args: { days?: int (default 7), category?: 'cardio'|'strength'|'racquet'|'walk'|'flexibility'|'other' }.",
       inputSchema: {
         type: "object",
         properties: {
           days: { type: "number", description: "Días a consultar, default 7" },
           category: {
             type: "string",
-            enum: ["cardio", "strength", "walk", "flexibility", "other"],
-            description: "Filtrar por categoría (opcional)",
+            enum: ["cardio", "strength", "racquet", "walk", "flexibility", "other"],
+            description: "Filtrar por categoría (opcional) — racquet = tenis/pádel/squash",
           },
         },
         additionalProperties: false,
