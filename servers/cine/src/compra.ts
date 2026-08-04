@@ -116,6 +116,7 @@ export interface IniciarResult {
   browser: Browser;
   mapaScreenshot: Buffer;
   seatDeadline: number; // epoch ms — vencimiento de la retención de asiento
+  disponibles: string[]; // labels de las butacas libres, leídas del DOM vivo
 }
 
 export async function iniciar(args: IniciarArgs): Promise<IniciarResult> {
@@ -234,7 +235,8 @@ export async function iniciar(args: IniciarArgs): Promise<IniciarResult> {
 
     const seatDeadline = await leerSeatDeadline(page);
     const mapaScreenshot = await page.screenshot({ fullPage: true });
-    return { page, browser, mapaScreenshot, seatDeadline };
+    const disponibles = parseAsientosDisponibles(await page.content());
+    return { page, browser, mapaScreenshot, seatDeadline, disponibles };
   } catch (e) {
     // Si algo falla antes de llegar a /seats, cerrar el browser para no dejar
     // Chrome colgado, y re-lanzar.
@@ -244,14 +246,99 @@ export async function iniciar(args: IniciarArgs): Promise<IniciarResult> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parser puro: labels de butacas SELECCIONABLES (⇔ tienen data-seat-identifier).
+// Parser puro: labels de butacas SELECCIONABLES.
+//
+// Cinemark renderiza el mapa de DOS formas distintas según el tipo de sala
+// (recon 2026-08-04, LA ODISEA — Sala 9 general y Sala 2 premier el mismo día,
+// así que NO es un cambio del sitio en el tiempo: conviven):
+//
+//  ── Sala general (butacas simples; ej. Sala 9, 229 butacas) ──
+//     Disponible: <div aria-label="A21" data-seat-identifier="A21"> + svg 9x9.
+//     Accesible (viewBox 21x20) y acompañante: MISMO div, SIN identifier.
+//     → acá `data-seat-identifier` sí discrimina "disponible".
+//
+//  ── Sala premier con ASIENTO DOBLE (ej. Sala 2, 52 butacas) ──
+//     Las 42 butacas de asiento doble NO llevan data-seat-identifier: solo
+//     aria-label y un svg 20x20 cuyo <path fill> codifica el estado:
+//        fill="#fff"    → libre        fill="#787272" → ocupada
+//     Solo los 3 asientos SUELTOS (B5/C5/D5) traen data-seat-identifier.
+//     → acá el discriminador es el COLOR del icono, no el atributo.
+//
+// Regla unificada: seleccionable ⇔ tiene data-seat-identifier (sala general +
+// sueltos) O su icono está pintado de blanco (asiento doble libre). Queda afuera
+// todo el resto: gris (ocupada), accesible, acompañante, y las ya seleccionadas
+// (que pasan a un icono 9x9 con <mask>, sin fill hex y sin identifier).
+//
+// BUG HISTÓRICO (2026-08-04): la regla original era solo "⇔ data-seat-identifier",
+// derivada de un recon hecho únicamente en sala general. En la Sala 2 eso daba
+// 3 disponibles de 45 reales → cualquier butaca que el usuario veía libre en el
+// mapa se rechazaba con "Asiento(s) no disponible(s)".
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Cada butaca del mapa es un <div> con aria-label "A21". */
+const BUTACA_RE = /<div\b([^>]*\baria-label="([A-Z]+\d+)"[^>]*)>/g;
+
+/** ¿El icono de la butaca está pintado de blanco (= libre en el layout premier)? */
+function iconoLibre(cuerpo: string): boolean {
+  const m = /<path\b[^>]*\bfill="(#[0-9a-fA-F]{3,8})"/.exec(cuerpo);
+  return !!m && /^#(fff|ffffff)$/i.test(m[1]);
+}
+
 export function parseAsientosDisponibles(html: string): string[] {
-  const out: string[] = [];
-  const re = /data-seat-identifier="([A-Z]+\d+)"/g;
+  // Se acota el cuerpo de cada butaca al tramo que va hasta la butaca SIGUIENTE:
+  // buscar el </svg> con un regex de rango fijo puede saltar al svg de la butaca
+  // de al lado y leerle el color a la vecina.
+  const hits: { attrs: string; label: string; start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) out.push(m[1]);
+  BUTACA_RE.lastIndex = 0;
+  while ((m = BUTACA_RE.exec(html))) {
+    hits.push({ attrs: m[1], label: m[2], start: m.index, end: BUTACA_RE.lastIndex });
+  }
+
+  const out: string[] = [];
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    const cuerpo = html.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : html.length);
+    if (/\bdata-seat-identifier=/.test(h.attrs) || iconoLibre(cuerpo)) out.push(h.label);
+  }
   return [...new Set(out)];
+}
+
+export interface FilaDisponible {
+  fila: string; // "B"
+  butacas: string; // "B1-B3, B6, B9"
+}
+
+// Agrupa las butacas libres por fila y comprime los tramos contiguos, para poder
+// LISTARLE al usuario qué puede elegir. Hace falta porque el screenshot del mapa
+// NO trae los números impresos (en la Sala 2 solo 3 de 52 butacas muestran su
+// etiqueta) — sin esta lista el usuario tiene que adivinar el código del asiento.
+export function agruparPorFila(labels: string[]): FilaDisponible[] {
+  const porFila = new Map<string, number[]>();
+  for (const l of labels) {
+    const m = /^([A-Z]+)(\d+)$/.exec(l);
+    if (!m) continue;
+    const nums = porFila.get(m[1]) ?? [];
+    nums.push(Number(m[2]));
+    porFila.set(m[1], nums);
+  }
+  return [...porFila.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([fila, nums]) => ({ fila, butacas: comprimirRangos(fila, nums) }));
+}
+
+// [1,2,3,6,9] → "B1-B3, B6, B9". Orden NUMÉRICO, no alfabético: con sort() a secas
+// "B10" cae antes que "B9" y los rangos salen mal en salas de 10+ butacas por fila.
+function comprimirRangos(fila: string, nums: number[]): string {
+  const ord = [...new Set(nums)].sort((a, b) => a - b);
+  const partes: string[] = [];
+  for (let i = 0; i < ord.length; ) {
+    let j = i;
+    while (j + 1 < ord.length && ord[j + 1] === ord[j] + 1) j++;
+    partes.push(j > i ? `${fila}${ord[i]}-${fila}${ord[j]}` : `${fila}${ord[i]}`);
+    i = j + 1;
+  }
+  return partes.join(", ");
 }
 
 export interface ElegirAsientosResult {
@@ -281,15 +368,19 @@ export async function elegirAsientos(
   const setDisp = new Set(disponibles);
   const faltantes = asientos.filter((a) => !setDisp.has(a));
   if (faltantes.length) {
+    // Se listan por FILA y no como un chorro de 30 labels truncado: el usuario
+    // tiene que poder leer de acá qué pedir en el reintento.
+    const porFila = agruparPorFila(disponibles)
+      .map((f) => `${f.fila}: ${f.butacas}`)
+      .join(" · ");
     throw new Error(
       `Asiento(s) no disponible(s): ${faltantes.join(", ")}. ` +
-        `Disponibles en esta sala (${disponibles.length}): ${disponibles.slice(0, 30).join(", ")}` +
-        (disponibles.length > 30 ? ", …" : ""),
+        `Libres en esta sala (${disponibles.length}) — ${porFila}`,
     );
   }
 
   for (const label of asientos) {
-    await page.locator(`[data-seat-identifier="${label}"]`).click();
+    await clickButaca(page, label);
     await page.waitForTimeout(400);
   }
 
@@ -299,7 +390,17 @@ export async function elegirAsientos(
   // Por eso NO sirve `button:has-text("Continuar")`; hay que clickear el primer
   // elemento VISIBLE cuyo texto sea exactamente "Continuar".
   await clickContinuarVisible(page);
-  await page.waitForURL(/tickets-purchase\/candies/i, { timeout: 20000 });
+  try {
+    await page.waitForURL(/tickets-purchase\/candies/i, { timeout: 20000 });
+  } catch {
+    // Cinemark no deja avanzar sin la cantidad exacta de butacas seleccionadas:
+    // quedarse en /seats significa que algún click no prendió. Sin este mensaje
+    // el error que sube es un timeout de navegación, que no dice nada útil.
+    throw new Error(
+      `No pude avanzar desde el mapa de asientos: probablemente no se seleccionó ` +
+        `alguna de las butacas (${asientos.join(", ")}). Volvé a mandar el mapa y reintentá.`,
+    );
+  }
   await page.waitForTimeout(2000);
 
   // Confitería (/candies): saltar SIN comprar nada. El mismo CTA "Continuar" del
@@ -313,6 +414,23 @@ export async function elegirAsientos(
   const total = await leerTotal(page);
   const resumenScreenshot = await page.screenshot({ fullPage: true });
   return { resumenScreenshot, total, seatRestanteMs: seatDeadline - Date.now() };
+}
+
+// Selecciona UNA butaca del mapa.
+//
+// En sala general la butaca disponible trae `data-seat-identifier` (selector más
+// específico, se prefiere). En sala premier con asiento doble las butacas NO lo
+// tienen y el único anclaje es el `aria-label` — clickear por identifier ahí
+// fallaba con un timeout críptico.
+//
+// OJO: cada mitad de un asiento doble es una butaca INDEPENDIENTE (confirmado con
+// Cal, 2026-08-04) — se clickean de a una, no existe un click que tome el par. Por
+// eso para sentarse junto hay que pedir las dos (ej. "A1 A2"), y por eso este
+// helper es por-butaca y el llamador itera.
+async function clickButaca(page: Page, label: string): Promise<void> {
+  const porId = page.locator(`[data-seat-identifier="${label}"]`);
+  const loc = (await porId.count()) > 0 ? porId : page.locator(`[aria-label="${label}"]`);
+  await loc.first().click({ timeout: 10000 });
 }
 
 // Clickea el primer elemento VISIBLE cuyo texto sea exactamente "Continuar".

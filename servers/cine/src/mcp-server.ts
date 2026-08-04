@@ -91,9 +91,11 @@ const TOOLS: Tool[] = [
       "Inicia una compra de entradas en Cinemark Ventura Mall (Santa Cruz). SOLO Cinemark: Multicine y " +
       "Cine Center no permiten compra automatizada. Args: { pelicula, hora ('20:30'), cantidad (1-10), " +
       "fecha? ('hoy'|'mañana'|'YYYY-MM-DD', default hoy) }. Abre el checkout como invitado y llega a la " +
-      "selección de asientos. Devuelve { purchaseId, mapaPath, minutosRestantes }. " +
+      "selección de asientos. Devuelve { purchaseId, mapaPath, minutosRestantes, butacasLibres, totalLibres }. " +
       "IMPORTANTE: (1) GUARDÁ el purchaseId — todas las tools siguientes lo necesitan. (2) Mandá el " +
-      "archivo de mapaPath al usuario con enviarFotoLocal y pedile qué asientos quiere (ej. 'B12 B13'). " +
+      "archivo de mapaPath al usuario con enviarFotoLocal Y ADEMÁS escribile la lista de 'butacasLibres' " +
+      "(una línea por fila, ej. 'Fila B: B1-B4, B6-B9'): el mapa NO trae los números de butaca impresos, " +
+      "así que sin esa lista el usuario no puede saber cómo se llama el asiento que ve libre. " +
       "(3) Cinemark retiene las butacas ~8 minutos: avisá el tiempo restante. Solo puede haber UNA " +
       "compra activa a la vez.",
     inputSchema: {
@@ -112,9 +114,11 @@ const TOOLS: Tool[] = [
     name: "elegirAsientosCine",
     description:
       "Selecciona los asientos elegidos por el usuario. Args: { purchaseId, asientos (ej. ['B12','B13']) }. " +
+      "Pasá UN label por entrada: en las salas premier las butacas vienen de a pares (asiento doble) pero " +
+      "cada mitad es independiente, así que para 2 personas juntas hay que pedir las dos (ej. ['A1','A2']). " +
       "Devuelve { resumenPath, total, minutosRestantes }. Mandá resumenPath al usuario con enviarFotoLocal " +
       "y PEDÍ CONFIRMACIÓN EXPLÍCITA antes de llamar a confirmarCompraCine. Si un asiento ya está ocupado " +
-      "devuelve error: avisá y volvé a mandar el mapa.",
+      "devuelve error CON la lista de butacas libres por fila: mostrale esa lista y pedile que elija de ahí.",
     inputSchema: {
       type: "object",
       properties: {
@@ -247,6 +251,11 @@ export function createCineServer(): Server {
           purchaseId,
           mapaPath: guardarCaptura("mapa", purchaseId, r.mapaScreenshot),
           minutosRestantes: minutosRestantes(r.seatDeadline),
+          // El screenshot NO trae los números de butaca impresos (en sala premier
+          // solo 3 de 52 muestran su etiqueta) → sin esta lista el usuario tiene
+          // que adivinar el código del asiento y termina pidiendo uno inexistente.
+          butacasLibres: compra.agruparPorFila(r.disponibles),
+          totalLibres: r.disponibles.length,
         });
       }
 
