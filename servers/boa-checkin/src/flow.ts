@@ -132,8 +132,18 @@ export async function selectJourney(page: Page, tramo?: string): Promise<SelectJ
   // El wait previo en searchBoaReservation ya confirmó que ALGUNO de los
   // textos esperados apareció ("Your journey(s)" incluido) — acá solo hace
   // falta un chequeo corto, no una espera larga.
+  //
+  // Bug real 2026-07-29 (reserva CHQE79, producción vía Jano y Vesta): BoA
+  // muestra el heading en SINGULAR ("Your journey") cuando a la reserva le
+  // queda un solo tramo pendiente de check-in (ej. ida ya volada, vuelta
+  // pendiente) — antes se buscaba el string exacto "Your journeys" (plural),
+  // que no matchea "Your journey" y hace que el código asuma "reserva de un
+  // solo tramo que salta esta pantalla" cuando en realidad SÍ está parado acá
+  // sin haber clickeado "Check in" — nunca avanza y listBoaPassengers falla
+  // en silencio con "no devolvió ningún pasajero". Regex acepta singular o
+  // plural.
   const onJourneysScreen = await waitVisible(
-    frame.getByRole("heading", { level: 1, name: "Your journeys" }),
+    frame.getByRole("heading", { level: 1, name: /^Your journeys?$/i }),
     2000,
   );
   if (!onJourneysScreen) {
@@ -343,8 +353,9 @@ async function readSeatMap(frame: Frame): Promise<BoaSeatOption> {
  * your booking" antes de bifurcar a su acción específica.
  */
 async function openManageBooking(frame: Frame, tramo?: string): Promise<void> {
+  // Mismo fix que en selectJourney (bug real 2026-07-29): singular o plural.
   const onJourneysScreen = await waitVisible(
-    frame.getByRole("heading", { level: 1, name: "Your journeys" }),
+    frame.getByRole("heading", { level: 1, name: /^Your journeys?$/i }),
     2000,
   );
   if (!onJourneysScreen) return; // reserva de un solo tramo: ya está en "Manage your booking"
