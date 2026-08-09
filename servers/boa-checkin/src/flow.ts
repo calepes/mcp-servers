@@ -633,6 +633,42 @@ export async function confirmSeatAndContinue(page: Page, seatCode?: string): Pro
  * PDFs reales de una reserva de 3 (Catalina/Antonia/Noe): cada botón de
  * "Download / Print", scopeado a SU fila, da un PDF distinto de 1 página.
  */
+/**
+ * La pestaña nueva que abre "Download / Print" arranca en `about:blank` y
+ * navega ASINCRÓNICAMENTE al PDF real (checkin.si.amadeus.net/.../bp?id=...)
+ * — `waitForLoadState("domcontentloaded")` resuelve para ese estado en
+ * blanco inicial, antes de la navegación real, dejando `popup.url()` vacío.
+ * Bug real reproducido en vivo 2026-08-09 (reserva HTJQOR): el evento 'page'
+ * disparaba con `url()===""`, y recién ~1-2s después `popup.url()` traía el
+ * link real — confirmado a mano con logging instrumentado, no es un cambio
+ * de sitio de BoA, es una carrera que este código nunca esperó bien. Poll
+ * genérico (no un `waitForURL` con dominio fijo) para no quedar atado a
+ * `checkin.si.amadeus.net` si Amadeus cambia el host del PDF.
+ *
+ * Exige la MISMA URL en 2 lecturas seguidas antes de aceptarla — un hop
+ * intermedio (challenge de WAF/Imperva, redirect de auth) podría aparecer
+ * como "no vacío y no about:blank" por una sola lectura sin ser el destino
+ * final (hallazgo de daemon-health-reviewer). Si se agota el timeout, TIRA
+ * error explícito con la última URL vista — devolver vacío en silencio
+ * reproduciría el bug original sin dejar ningún rastro para diagnosticar,
+ * contradiciendo la razón de ser de `captureDiagnostics` en este mismo
+ * archivo (mismo hallazgo).
+ */
+async function waitForRealUrl(popup: Page, timeoutMs = 15000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let candidate: string | null = null;
+  while (Date.now() < deadline) {
+    const u = popup.url();
+    const esReal = Boolean(u) && u !== "about:blank";
+    if (esReal && u === candidate) return u;
+    candidate = esReal ? u : null;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(
+    `downloadBoardingPassRow: timeout (${timeoutMs}ms) esperando que la pestaña nueva navegue a la URL real del boarding pass. Última URL vista: "${popup.url()}".`,
+  );
+}
+
 async function downloadBoardingPassRow(page: Page, row: import("playwright").Locator): Promise<string> {
   const rowDownload = row.getByRole("button", { name: "Download / Print" });
   const yaVisible = await waitVisible(rowDownload, 500);
@@ -644,8 +680,8 @@ async function downloadBoardingPassRow(page: Page, row: import("playwright").Loc
     page.context().waitForEvent("page", { timeout: 15000 }),
     rowDownload.click(),
   ]);
-  await popup.waitForLoadState("domcontentloaded");
-  const url = popup.url();
+  await popup.waitForLoadState("domcontentloaded").catch(() => {});
+  const url = await waitForRealUrl(popup);
   await popup.close();
   return url;
 }
