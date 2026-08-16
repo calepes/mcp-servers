@@ -95,4 +95,23 @@ export class AirtableClient {
       };
     });
   }
+
+  // "Meta {year}" es un campo currency constante repetido en TODAS las filas
+  // de Tracking Portfolio (no varía por fecha) — alcanza con el registro más
+  // reciente. Devuelve 0 si el campo no existe todavía para ese año.
+  async getAnnualGoal(year: number): Promise<number> {
+    const field = `Meta ${year}`;
+    const records = await this.fetchTable(
+      "Tracking Portfolio",
+      new URLSearchParams({
+        "sort[0][field]": "Fecha",
+        "sort[0][direction]": "desc",
+        "maxRecords": "1",
+        "fields[]": field,
+      }),
+    );
+    if (records.length === 0) return 0;
+    const val = records[0].fields[field];
+    return typeof val === "number" ? val : 0;
+  }
 }

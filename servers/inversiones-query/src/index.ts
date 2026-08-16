@@ -15,6 +15,7 @@ import { getDailyMovers } from "./tools/movers.js";
 import { getPositionDetail, searchPosition } from "./tools/position.js";
 import { getPriceHistory } from "./tools/prices.js";
 import { getTransactionHistory } from "./tools/transactions.js";
+import { getPortfolioGoal } from "./tools/goal.js";
 import type { Period } from "./types.js";
 
 function requireEnv(name: string): string {
@@ -171,6 +172,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["side", "date", "ticker", "broker", "shares", "price"],
       },
     },
+    {
+      name: "getPortfolioGoal",
+      description: "Returns progress toward the annual investment goal (Meta {year} field in Airtable Tracking Portfolio): current value, goal, remaining amount, and progress %.",
+      inputSchema: {
+        type: "object",
+        properties: { year: { type: "number", description: "Goal year, e.g. 2026" } },
+        required: ["year"],
+      },
+    },
   ],
 }));
 
@@ -310,6 +320,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
         return { content: [{ type: "text", text: (proc.stdout || "").trim() }] };
+      }
+      case "getPortfolioGoal": {
+        const year = Number(args["year"]);
+        const result = await getPortfolioGoal(kubera, airtable, cache, year);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

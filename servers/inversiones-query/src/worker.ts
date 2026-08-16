@@ -8,6 +8,7 @@ import { getDailyMovers } from './tools/movers.js';
 import { getPositionDetail, searchPosition } from './tools/position.js';
 import { getPriceHistory } from './tools/prices.js';
 import { getTransactionHistory } from './tools/transactions.js';
+import { getPortfolioGoal } from './tools/goal.js';
 import type { Period } from './types.js';
 
 interface Env extends McpEnv {
@@ -149,6 +150,15 @@ const TOOLS: McpTool[] = [
       required: ['side', 'date', 'ticker', 'broker', 'shares', 'price'],
     },
   },
+  {
+    name: 'getPortfolioGoal',
+    description: 'Returns progress toward the annual investment goal (Meta {year} field in Airtable Tracking Portfolio): current value, goal, remaining amount, and progress %.',
+    inputSchema: {
+      type: 'object',
+      properties: { year: { type: 'number', description: 'Goal year, e.g. 2026' } },
+      required: ['year'],
+    },
+  },
 ];
 
 const PORTFOLIO_ID = '6bccf4ba-e50d-442b-9f52-5cb3bc64523d';
@@ -239,6 +249,9 @@ async function dispatchTool(name: string, args: unknown, env: Record<string, unk
 
     case 'recordTransaction':
       throw new Error('recordTransaction is not supported in the CF Worker — use the local stdio MCP (mcp-inversiones-query) instead');
+
+    case 'getPortfolioGoal':
+      return getPortfolioGoal(kubera, airtable, cache, Number(a['year']));
 
     default:
       throw new Error(`Unknown tool: ${name}`);

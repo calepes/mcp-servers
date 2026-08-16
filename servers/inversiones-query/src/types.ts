@@ -142,6 +142,15 @@ export interface KuberaPortfolio {
   asOf: string;
 }
 
+// Tool 13
+export interface PortfolioGoal {
+  year: number;
+  goal: number;
+  current: number;
+  progressPct: number;
+  remaining: number;
+}
+
 // Internal — Yahoo Finance quote shape
 export interface YahooQuote {
   symbol: string;
