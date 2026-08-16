@@ -1,20 +1,14 @@
 // tools.ts — definición de los 4 tools, compartida entre worker.ts (CF Worker) e
-// index.ts (stdio). Estructuralmente compatible con McpTool de worker-mcp-utils y con
+// index.ts (stdio). Usa McpTool de worker-mcp-utils directamente, compatible con
 // el formato que espera @modelcontextprotocol/sdk (mismos 3 campos: name/description/inputSchema).
 
 import { CIUDADES } from "./client.js";
-
-export interface McpToolSchema {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  annotations?: Record<string, unknown>;
-}
+import type { McpTool } from "worker-mcp-utils";
 
 const CIUDADES_LIST = Object.keys(CIUDADES).join(", ");
 const READ_ONLY = { readOnlyHint: true };
 
-export const TOOLS: McpToolSchema[] = [
+export const TOOLS: McpTool[] = [
   {
     name: "getLluviaDia",
     description:
