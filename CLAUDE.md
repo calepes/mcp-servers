@@ -152,3 +152,20 @@ const parser = new PDFParse({ data: new Uint8Array(buf) });
 const { text } = await parser.getText();          // NO `parsed.text` directo
 ```
 El bug clásico (`require` sin destructurar + `parsed.text` sin `.getText()`) da `undefined` → `TypeError` que un catch genérico enmascara como `"[PDF — error al procesar]"`. Caso real: `schedule-cal.ts` en Jano/Vesta (PDFs de viajes en Notion fallaban silenciosamente). Mismo patrón ya en `index.ts` (`processDocument`).
+
+## Gotcha: Cloudflare bloquea fetch Worker→Worker sobre `*.workers.dev` (Diag 2026-08-16)
+
+Un Worker CF que hace `fetch()` a OTRO Worker propio en `*.workers.dev` recibe **404 sin que el destino llegue a invocarse** (confirmado con `wrangler tail`: cero logs del lado receptor) — protección anti-SSRF de Cloudflare contra Workers usados para pegarle a otros `workers.dev`. El mismo request con `curl` desde afuera responde 200 normal, lo que lo hace parecer un bug de la app cuando en realidad es la red. **No pasa con el stdio local** (Node/curl, fetch normal), solo con Worker↔Worker. Caso real: `mcp-lluvia-bolivia` (worker.ts) llamando a `lluvia-bolivia.carlos-cb4.workers.dev`.
+
+**Fix: Service Binding**, no cambiar dominios ni reintentar con headers distintos:
+```toml
+# wrangler.toml del worker que llama
+[[services]]
+binding = "NOMBRE_BINDING"
+service = "nombre-del-worker-destino"
+```
+```ts
+// env.NOMBRE_BINDING.fetch(...) en vez de fetch("https://destino.workers.dev/...")
+const fetcher = env.NOMBRE_BINDING.fetch.bind(env.NOMBRE_BINDING);
+```
+El código compartido (cliente usado también por el entry point stdio) debe aceptar el fetcher como parámetro opcional con default `fetch` global — el stdio nunca pasa binding, solo `worker.ts` lo arma desde `env`. Aplica a cualquier MCP futuro donde un Worker propio necesite llamar a otro Worker propio.

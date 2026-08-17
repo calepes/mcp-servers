@@ -61,7 +61,10 @@ export const TOOLS: McpTool[] = [
     description:
       `PRONÓSTICO de lluvia (estimación de modelo Open-Meteo, NO dato medido) para los próximos días, hasta 16. ` +
       `Ciudades: ${CIUDADES_LIST}. Presentar SIEMPRE como pronóstico/estimación, nunca como dato real — a diferencia ` +
-      `de getLluviaDia/getLluviaSerie/getLluviaResumen, que sí son lo realmente llovido.`,
+      `de getLluviaDia/getLluviaSerie/getLluviaResumen, que sí son lo realmente llovido. Cada día trae además ` +
+      `'estimacion' (etiqueta Poca/Normal/Considerable/Fuerte/Excepcional + percentil_aprox + max_hist) — una ` +
+      `referencia APROXIMADA calculada interpolando sobre la escala histórica de lluvia medida de esa ciudad, ` +
+      `no un percentil oficial. Presentarla siempre marcada como estimación, igual que el mm pronosticado.`,
     inputSchema: {
       type: "object",
       properties: {

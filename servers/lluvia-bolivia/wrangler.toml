@@ -2,3 +2,10 @@ name = "mcp-lluvia-bolivia"
 main = "src/worker.ts"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare bloquea el fetch público a *.workers.dev cuando el origen es OTRO Worker
+# (anti-SSRF, devuelve 404 sin invocar destino — confirmado con wrangler tail: la
+# request nunca llega a lluvia-bolivia). El service binding esquiva la red pública.
+[[services]]
+binding = "LLUVIA_BOLIVIA"
+service = "lluvia-bolivia"
