@@ -12,6 +12,7 @@ import { YahooClient } from "./clients/yahoo.js";
 import { AirtableClient } from "./clients/airtable.js";
 import { getPortfolioSummary, getPortfolioConcentration, getPortfolioPerformance } from "./tools/portfolio.js";
 import { getDailyMovers } from "./tools/movers.js";
+import { getTickerNews } from "./tools/news.js";
 import { getPositionDetail, searchPosition } from "./tools/position.js";
 import { getPriceHistory } from "./tools/prices.js";
 import { getTransactionHistory } from "./tools/transactions.js";
@@ -52,6 +53,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: { n: { type: "number", description: "Number of movers to return (default 5)" } },
         required: [],
+      },
+    },
+    {
+      name: "getTickerNews",
+      description: "Explains WHY a ticker moved: returns its current price change together with recent news headlines (publisher + how many hours ago). Use this whenever asked why a stock rose or fell — never answer that from prior knowledge. Headlines come from a search index and often include unrelated stories: only cite one if it actually names the company, and if none does, say the news doesn't explain the move rather than forcing a link.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticker: { type: "string", description: "Ticker symbol (e.g. NU, NVDA)" },
+          days: { type: "number", description: "How many days back to look for news (default 3)" },
+          limit: { type: "number", description: "Max headlines to return (default 8)" },
+        },
+        required: ["ticker"],
       },
     },
     {
@@ -196,6 +210,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "getDailyMovers": {
         const n = typeof args["n"] === "number" ? args["n"] : 5;
         const result = await getDailyMovers(kubera, yahoo, cache, n);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+      case "getTickerNews": {
+        const ticker = String(args["ticker"]);
+        const days = typeof args["days"] === "number" ? args["days"] : undefined;
+        const limit = typeof args["limit"] === "number" ? args["limit"] : undefined;
+        const result = await getTickerNews(ticker, yahoo, cache, days, limit);
+        if (!result) return { content: [{ type: "text", text: JSON.stringify({ error: `Ticker not found: ${ticker}` }) }], isError: true };
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
       case "getPositionDetail": {

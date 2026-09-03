@@ -5,6 +5,7 @@ import { YahooClient } from './clients/yahoo.js';
 import { AirtableClient } from './clients/airtable.js';
 import { getPortfolioSummary, getPortfolioConcentration, getPortfolioPerformance } from './tools/portfolio.js';
 import { getDailyMovers } from './tools/movers.js';
+import { getTickerNews } from './tools/news.js';
 import { getPositionDetail, searchPosition } from './tools/position.js';
 import { getPriceHistory } from './tools/prices.js';
 import { getTransactionHistory } from './tools/transactions.js';
@@ -30,6 +31,19 @@ const TOOLS: McpTool[] = [
       type: 'object',
       properties: { n: { type: 'number', description: 'Number of movers to return (default 5)' } },
       required: [],
+    },
+  },
+  {
+    name: 'getTickerNews',
+    description: 'Explains WHY a ticker moved: returns its current price change together with recent news headlines (publisher + how many hours ago). Use this whenever asked why a stock rose or fell — never answer that from prior knowledge. Headlines come from a search index and often include unrelated stories: only cite one if it actually names the company, and if none does, say the news does not explain the move rather than forcing a link.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ticker: { type: 'string', description: 'Ticker symbol (e.g. NU, NVDA)' },
+        days: { type: 'number', description: 'How many days back to look for news (default 3)' },
+        limit: { type: 'number', description: 'Max headlines to return (default 8)' },
+      },
+      required: ['ticker'],
     },
   },
   {
@@ -177,6 +191,9 @@ async function dispatchTool(name: string, args: unknown, env: Record<string, unk
 
     case 'getDailyMovers':
       return getDailyMovers(kubera, yahoo, cache, (a['n'] as number) ?? 5);
+
+    case 'getTickerNews':
+      return getTickerNews(a['ticker'] as string, yahoo, cache, a['days'] as number | undefined, a['limit'] as number | undefined);
 
     case 'getPositionDetail':
       return getPositionDetail(a['ticker'] as string, kubera, yahoo, cache);

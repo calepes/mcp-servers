@@ -151,6 +151,26 @@ export interface PortfolioGoal {
   remaining: number;
 }
 
+// Tool 14
+export interface NewsItem {
+  title: string;
+  publisher: string;
+  publishedAt: string;
+  hoursAgo: number;
+  link: string;
+}
+
+export interface TickerNews {
+  ticker: string;
+  name: string;
+  changePct: number;
+  currentPrice: number;
+  currency: string;
+  marketDate: string;
+  windowDays: number;
+  news: NewsItem[];
+}
+
 // Internal — Yahoo Finance quote shape
 export interface YahooQuote {
   symbol: string;

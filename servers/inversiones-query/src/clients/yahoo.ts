@@ -1,5 +1,13 @@
 import type { YahooQuote, PriceHistory, PricePoint } from "../types.js";
 
+// Raw shape from Yahoo's search endpoint — normalized into NewsItem by tools/news.ts
+export interface RawNewsItem {
+  title?: string;
+  publisher?: string;
+  link?: string;
+  providerPublishTime?: number;
+}
+
 // query2 works without auth; /v7/quote on query1 requires authentication (blocked as of 2026-05)
 const BASE = "https://query2.finance.yahoo.com";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
@@ -59,6 +67,16 @@ export class YahooClient {
       regularMarketTime: Number(meta["regularMarketTime"] ?? 0),
       marketState: String(meta["marketState"] ?? "CLOSED"),
     };
+  }
+
+  // Headlines only. /v1/finance/search works without auth (unlike /v7/quote) and
+  // returns news[] alongside quote matches; quotesCount=0 keeps the payload small.
+  async getNews(ticker: string, limit: number): Promise<RawNewsItem[]> {
+    const url = `${BASE}/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=${limit}&quotesCount=0`;
+    const res = await fetch(url, { headers: { "User-Agent": UA } });
+    if (!res.ok) throw new Error(`Yahoo Finance HTTP ${res.status} for ${ticker} news`);
+    const data = await res.json() as { news?: RawNewsItem[] };
+    return data.news ?? [];
   }
 
   async getChartHistory(ticker: string, days: number): Promise<PriceHistory> {
