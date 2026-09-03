@@ -5,8 +5,12 @@
 // Tools:
 //   searchFraterno       — busca fraterno por nombre/apellido
 //   listPendingPayments  — fraternos activos sin pago para un concepto
+//   listGrupoCobros      — grupos de cobro disponibles
+//   listEventos          — juntes disponibles
+//   listExpensesByEvento — gastos registrados para un junte
 //   registerDeposit      — registra un depósito en Registro Depositos
-//   uploadReceipt        — comprime imagen y sube a litterbox, retorna URL
+//   registerExpense      — registra un gasto en Registro Pagos
+//   uploadReceipt        — sube imagen o PDF a litterbox, retorna URL
 //   createEvento         — crea evento en Calendario Eventos
 //   createConceptoCobro  — crea concepto de cobro en Grupo de Cobros
 //   getActiveEvento      — retorna el próximo evento (más reciente)
@@ -22,7 +26,7 @@ import {
 import { execFileSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -32,6 +36,7 @@ const TABLES = {
   grupoCobros:      "tblB2A27V5kvbDIP7",
   calendarioEventos:"tblTpDPaBRFN8JXOQ",
   registroDepositos:"tblBRLsVct2bKNFa3",
+  registroPagos:    "tbl51ZIlMgQSgSebe",
 } as const;
 
 const FIELDS = {
@@ -62,6 +67,15 @@ const FIELDS = {
   dep_cuenta:        "fldElkLv3e1YvaX05",
   dep_observacion:   "fldtXQ94PrMoqUlnE",
   dep_checkPago:     "fld4nxH6Cfq2eFcFW",
+  // Registro Pagos
+  pago_fecha:        "fldZe7R6mBzVyNeRI",
+  pago_pagadoA:      "fldjzLdfzGUlWiLMA",
+  pago_concepto:     "fldNIfo88S7mTYst2",
+  pago_valor:        "fldLcobCtIJds8ORZ",
+  pago_constancia:   "fldPxdkaPUD2n12hq",
+  pago_cuenta:       "flduIAeOvKHX9OTK6",
+  pago_estado:       "fld70R4uIJGkWm5Xw",
+  pago_junte:        "fldAP55GoRvwRAmFc",
 } as const;
 
 const CUENTA_BCP_ID = "recNhURjjtRHKyd8U";
@@ -130,29 +144,36 @@ async function atCreate(token: string, table: string, fields: Record<string, any
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fraternoNombre(fields: Record<string, any>): string {
-  const full = fields[FIELDS.fraterno_nombre];
+  const full = fieldValue(fields, FIELDS.fraterno_nombre, "Fraterno");
   if (full) return full;
-  const ape = fields[FIELDS.fraterno_apellidos] ?? fields["Apellidos"] ?? "";
-  const nom = fields[FIELDS.fraterno_nombres]   ?? fields["Nombres"]   ?? "";
+  const ape = fieldValue(fields, FIELDS.fraterno_apellidos, "Apellidos") ?? "";
+  const nom = fieldValue(fields, FIELDS.fraterno_nombres, "Nombres") ?? "";
   return `${ape} ${nom}`.trim() || "—";
 }
 
-// ── Image upload ──────────────────────────────────────────────────────────────
+function fieldValue(fields: Record<string, any>, id: string, name: string): any {
+  return fields[id] ?? fields[name];
+}
 
-function uploadReceipt(imagePath: string): string {
-  // Compress
-  const outPath = "/tmp/achoradazos_receipt.jpg";
-  execFileSync("sips", ["-Z", "900", "-s", "format", "jpeg", "-s", "formatOptions", "80", imagePath, "--out", outPath]);
+// ── Receipt upload ────────────────────────────────────────────────────────────
+
+function uploadReceipt(imagePath: string): { url: string; filename: string } {
+  const isPdf = imagePath.toLowerCase().endsWith(".pdf") || readFileSync(imagePath).subarray(0, 5).toString("ascii") === "%PDF-";
+  const uploadPath = isPdf ? imagePath : "/tmp/achoradazos_receipt.jpg";
+  const filename = isPdf ? (basename(imagePath).toLowerCase().endsWith(".pdf") ? basename(imagePath) : "constancia.pdf") : "constancia.jpg";
+  if (!isPdf) {
+    execFileSync("sips", ["-Z", "900", "-s", "format", "jpeg", "-s", "formatOptions", "80", imagePath, "--out", uploadPath]);
+  }
 
   // Upload to litterbox (24h temp URL)
   const result = execFileSync("curl", [
-    "-s", "-F", "reqtype=fileupload", "-F", "time=24h",
-    "-F", `fileToUpload=@${outPath}`,
+    "-s", "--connect-timeout", "10", "--max-time", "60", "-F", "reqtype=fileupload", "-F", "time=24h",
+    "-F", `fileToUpload=@${uploadPath};filename=${filename}`,
     LITTERBOX_URL,
   ]).toString().trim();
 
   if (!result.startsWith("http")) throw new Error(`Upload failed: ${result}`);
-  return result;
+  return { url: result, filename };
 }
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
@@ -187,8 +208,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "listGrupoCobros",
+      description: "Lista grupos de cobro con su monto, cantidad y estado.",
+      inputSchema: {
+        type: "object",
+        properties: { activos: { type: "boolean", description: "Filtrar por estado activo." } },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "listEventos",
+      description: "Lista juntes con fecha y lugar.",
+      inputSchema: {
+        type: "object",
+        properties: { desde: { type: "string", description: "Fecha mínima YYYY-MM-DD." } },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "listExpensesByEvento",
+      description: "Consulta los gastos registrados para un junte. Retorna cantidad, total y detalle de fecha, proveedor, concepto, monto y estado.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          junteId: { type: "string", description: "Record ID del junte en Calendario Eventos, obtenido con listEventos." },
+        },
+        required: ["junteId"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "registerDeposit",
-      description: "Registra un depósito de cuota en Registro Depositos de Airtable. Requiere fraternoId (de searchFraterno), conceptoId (de getActiveConcepto), junteId (de getActiveEvento), valor, fecha (YYYY-MM-DD). Opcionales: constanciaUrl (de uploadReceipt), observacion (nro de transacción).",
+      description: "Registra un depósito de cuota en Registro Depositos de Airtable. Requiere fraternoId (de searchFraterno), conceptoId (de listGrupoCobros), junteId (de listEventos), valor, fecha (YYYY-MM-DD). Opcionales: constanciaUrl y constanciaFilename (de uploadReceipt), observacion (nro de transacción).",
       inputSchema: {
         type: "object",
         properties: {
@@ -198,6 +249,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           valor:         { type: "number", description: "Monto pagado en Bs" },
           fecha:         { type: "string", description: "Fecha del pago en formato YYYY-MM-DD" },
           constanciaUrl: { type: "string", description: "URL temporal de la constancia (de uploadReceipt)" },
+          constanciaFilename: { type: "string", description: "Nombre de archivo de la constancia (de uploadReceipt)" },
           observacion:   { type: "string", description: "Nro de transacción u observación libre" },
         },
         required: ["fraternoId", "conceptoId", "junteId", "valor", "fecha"],
@@ -205,12 +257,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "uploadReceipt",
-      description: "Comprime una imagen de comprobante y la sube a litterbox.catbox.moe (URL temporal 24h) para adjuntarla a Airtable. Retorna la URL pública.",
+      name: "registerExpense",
+      description: "Registra un gasto pagado en Registro Pagos de Airtable. Requiere pagadoA, concepto, junteId (de listEventos), valor y fecha (YYYY-MM-DD). Opcionales: constanciaUrl y constanciaFilename (de uploadReceipt, admite imagen o PDF).",
       inputSchema: {
         type: "object",
         properties: {
-          imagePath: { type: "string", description: "Path absoluto a la imagen PNG/JPG del comprobante" },
+          pagadoA:       { type: "string", description: "Proveedor o persona a quien se pagó" },
+          concepto:      { type: "string", description: "Descripción del gasto" },
+          junteId:       { type: "string", description: "Record ID del junte en Calendario Eventos" },
+          valor:         { type: "number", description: "Monto pagado en Bs" },
+          fecha:         { type: "string", description: "Fecha del gasto en formato YYYY-MM-DD" },
+          constanciaUrl: { type: "string", description: "URL temporal de la constancia (de uploadReceipt)" },
+          constanciaFilename: { type: "string", description: "Nombre de archivo de la constancia (de uploadReceipt)" },
+        },
+        required: ["pagadoA", "concepto", "junteId", "valor", "fecha"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "uploadReceipt",
+      description: "Sube un comprobante de imagen o PDF a litterbox.catbox.moe (URL temporal 24h) para adjuntarlo a Airtable. Las imágenes se comprimen; los PDF se conservan como archivo PDF. Retorna JSON con url y filename, que deben pasarse a registerExpense o registerDeposit.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          imagePath: { type: "string", description: "Path absoluto a la imagen PNG/JPG o PDF del comprobante" },
         },
         required: ["imagePath"],
         additionalProperties: false,
@@ -290,8 +360,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const result = records.map(r => ({
         id:        r.id,
         nombre:    fraternoNombre(r.fields),
-        categoria: r.fields[FIELDS.fraterno_categoria]?.name ?? r.fields[FIELDS.fraterno_categoria] ?? "—",
-        estado:    r.fields[FIELDS.fraterno_estado]?.name    ?? r.fields[FIELDS.fraterno_estado]    ?? "—",
+        categoria: fieldValue(r.fields, FIELDS.fraterno_categoria, "Categoria")?.name ?? fieldValue(r.fields, FIELDS.fraterno_categoria, "Categoria") ?? "—",
+        estado:    fieldValue(r.fields, FIELDS.fraterno_estado, "Estado")?.name ?? fieldValue(r.fields, FIELDS.fraterno_estado, "Estado") ?? "—",
       }));
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
@@ -303,8 +373,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         fields: [FIELDS.fraterno_nombre, FIELDS.fraterno_nombres, FIELDS.fraterno_apellidos, FIELDS.fraterno_pagoMayo].join(","),
         sort: JSON.stringify([{ field: "Apellidos", direction: "asc" }]),
       });
-      const pending = records.filter(r => !r.fields[FIELDS.fraterno_pagoMayo]);
-      const paid    = records.filter(r =>  r.fields[FIELDS.fraterno_pagoMayo]);
+      const pending = records.filter(r => !fieldValue(r.fields, FIELDS.fraterno_pagoMayo, "Pago Mayo 2026"));
+      const paid    = records.filter(r =>  fieldValue(r.fields, FIELDS.fraterno_pagoMayo, "Pago Mayo 2026"));
       return {
         content: [{
           type: "text",
@@ -317,11 +387,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
+    if (name === "listGrupoCobros") {
+      const { activos } = args as { activos?: boolean };
+      const records = await atList(token, TABLES.grupoCobros, {
+        ...(activos === undefined ? {} : { filterByFormula: activos ? "{Activos}=TRUE()" : "NOT({Activos})" }),
+        fields: [FIELDS.cobro_nombre, FIELDS.cobro_valorUnit, FIELDS.cobro_cantidad, FIELDS.cobro_activo].join(","),
+      });
+      const grupos = records.map(record => ({
+        id: record.id,
+        nombre: fieldValue(record.fields, FIELDS.cobro_nombre, "Name"),
+        valorUnitario: fieldValue(record.fields, FIELDS.cobro_valorUnit, "Valor Unitario"),
+        cantidad: fieldValue(record.fields, FIELDS.cobro_cantidad, "Cantidad"),
+        activo: Boolean(fieldValue(record.fields, FIELDS.cobro_activo, "Activos")),
+      }));
+      return { content: [{ type: "text", text: JSON.stringify(grupos, null, 2) }] };
+    }
+
+    if (name === "listEventos") {
+      const { desde } = args as { desde?: string };
+      if (desde && !/^\d{4}-\d{2}-\d{2}$/.test(desde)) throw new Error("desde debe usar formato YYYY-MM-DD");
+      const records = await atList(token, TABLES.calendarioEventos, {
+        ...(desde ? { filterByFormula: `IS_AFTER({Inicio}, '${desde}')` } : {}),
+        sort: JSON.stringify([{ field: "Inicio", direction: "desc" }]),
+        fields: [FIELDS.evento_nombre, FIELDS.evento_inicio, FIELDS.evento_lugar].join(","),
+      });
+      const eventos = records.map(record => ({
+        id: record.id,
+        nombre: fieldValue(record.fields, FIELDS.evento_nombre, "Name"),
+        fecha: fieldValue(record.fields, FIELDS.evento_inicio, "Inicio"),
+        lugar: fieldValue(record.fields, FIELDS.evento_lugar, "Lugar")?.name ?? "—",
+      }));
+      return { content: [{ type: "text", text: JSON.stringify(eventos, null, 2) }] };
+    }
+
+    if (name === "listExpensesByEvento") {
+      const { junteId } = args as { junteId: string };
+      const records = await atList(token, TABLES.registroPagos, {
+        fields: [FIELDS.pago_fecha, FIELDS.pago_pagadoA, FIELDS.pago_concepto, FIELDS.pago_valor, FIELDS.pago_estado, FIELDS.pago_junte].join(","),
+        sort: JSON.stringify([{ field: "Date", direction: "desc" }]),
+      });
+      const gastos = records
+        .filter(record => {
+          const junte = fieldValue(record.fields, FIELDS.pago_junte, "Junte");
+          return Array.isArray(junte) && junte.includes(junteId);
+        })
+        .map(record => ({
+          id: record.id,
+          fecha: fieldValue(record.fields, FIELDS.pago_fecha, "Date"),
+          pagadoA: fieldValue(record.fields, FIELDS.pago_pagadoA, "Pagado a"),
+          concepto: fieldValue(record.fields, FIELDS.pago_concepto, "Concepto"),
+          valor: Number(fieldValue(record.fields, FIELDS.pago_valor, "Valor Pagado") ?? 0),
+          estado: fieldValue(record.fields, FIELDS.pago_estado, "Estado Pago")?.name ?? fieldValue(record.fields, FIELDS.pago_estado, "Estado Pago"),
+        }));
+      return { content: [{ type: "text", text: JSON.stringify({ junteId, cantidad: gastos.length, total: gastos.reduce((sum, gasto) => sum + gasto.valor, 0), gastos }, null, 2) }] };
+    }
+
     // ── registerDeposit ─────────────────────────────────────────────────────
     if (name === "registerDeposit") {
-      const { fraternoId, conceptoId, junteId, valor, fecha, constanciaUrl, observacion } = args as {
+      const { fraternoId, conceptoId, junteId, valor, fecha, constanciaUrl, constanciaFilename, observacion } = args as {
         fraternoId: string; conceptoId: string; junteId: string;
-        valor: number; fecha: string; constanciaUrl?: string; observacion?: string;
+        valor: number; fecha: string; constanciaUrl?: string; constanciaFilename?: string; observacion?: string;
       };
       const fields: Record<string, any> = {
         [FIELDS.dep_fecha]:     fecha,
@@ -333,17 +458,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         [FIELDS.dep_checkPago]: true,
       };
       if (observacion) fields[FIELDS.dep_observacion] = observacion;
-      if (constanciaUrl) fields[FIELDS.dep_constancia] = [{ url: constanciaUrl, filename: "constancia.jpg" }];
+      if (constanciaUrl) fields[FIELDS.dep_constancia] = [{ url: constanciaUrl, filename: constanciaFilename ?? "constancia.jpg" }];
 
       const created = await atCreate(token, TABLES.registroDepositos, fields);
       return { content: [{ type: "text", text: `Depósito #${created.fields?.Name ?? created.id} registrado.` }] };
     }
 
+    if (name === "registerExpense") {
+      const { pagadoA, concepto, junteId, valor, fecha, constanciaUrl, constanciaFilename } = args as {
+        pagadoA: string; concepto: string; junteId: string;
+        valor: number; fecha: string; constanciaUrl?: string; constanciaFilename?: string;
+      };
+      const fields: Record<string, any> = {
+        [FIELDS.pago_fecha]:   fecha,
+        [FIELDS.pago_pagadoA]: pagadoA,
+        [FIELDS.pago_concepto]: concepto,
+        [FIELDS.pago_valor]:   valor,
+        [FIELDS.pago_cuenta]:  [CUENTA_BCP_ID],
+        [FIELDS.pago_estado]:  "Pagado",
+        [FIELDS.pago_junte]:   [junteId],
+      };
+      if (constanciaUrl) fields[FIELDS.pago_constancia] = [{ url: constanciaUrl, filename: constanciaFilename ?? "constancia.jpg" }];
+
+      const created = await atCreate(token, TABLES.registroPagos, fields);
+      return { content: [{ type: "text", text: `Gasto #${created.fields?.Name ?? created.id} registrado.` }] };
+    }
+
     // ── uploadReceipt ───────────────────────────────────────────────────────
     if (name === "uploadReceipt") {
       const { imagePath } = args as { imagePath: string };
-      const url = uploadReceipt(imagePath);
-      return { content: [{ type: "text", text: url }] };
+      return { content: [{ type: "text", text: JSON.stringify(uploadReceipt(imagePath)) }] };
     }
 
     // ── createEvento ────────────────────────────────────────────────────────
@@ -386,9 +530,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: "text",
           text: JSON.stringify({
             id:     r.id,
-            nombre: r.fields[FIELDS.evento_nombre],
-            fecha:  r.fields[FIELDS.evento_inicio],
-            lugar:  r.fields[FIELDS.evento_lugar]?.name ?? "—",
+            nombre: fieldValue(r.fields, FIELDS.evento_nombre, "Name"),
+            fecha:  fieldValue(r.fields, FIELDS.evento_inicio, "Inicio"),
+            lugar:  fieldValue(r.fields, FIELDS.evento_lugar, "Lugar")?.name ?? "—",
           }),
         }],
       };
@@ -408,9 +552,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: "text",
           text: JSON.stringify({
             id:           r.id,
-            nombre:       r.fields[FIELDS.cobro_nombre],
-            valorUnitario:r.fields[FIELDS.cobro_valorUnit],
-            cantidad:     r.fields[FIELDS.cobro_cantidad],
+            nombre:       fieldValue(r.fields, FIELDS.cobro_nombre, "Name"),
+            valorUnitario:fieldValue(r.fields, FIELDS.cobro_valorUnit, "Valor Unitario"),
+            cantidad:     fieldValue(r.fields, FIELDS.cobro_cantidad, "Cantidad"),
           }),
         }],
       };
@@ -437,27 +581,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ]);
 
       const pending = fraternos
-        .filter(r => !r.fields[FIELDS.fraterno_pagoMayo])
+        .filter(r => !fieldValue(r.fields, FIELDS.fraterno_pagoMayo, "Pago Mayo 2026"))
         .map(r => fraternoNombre(r.fields));
 
       const concepto = conceptoRecords[0];
       const evento   = eventoRecords[0];
-      const valor    = concepto?.fields[FIELDS.cobro_valorUnit] ?? 250;
-      const pagoTotal= fraternos.filter(r => r.fields[FIELDS.fraterno_pagoMayo]).length;
+      const valor    = concepto ? fieldValue(concepto.fields, FIELDS.cobro_valorUnit, "Valor Unitario") ?? 250 : 250;
+      const pagoTotal= fraternos.filter(r => fieldValue(r.fields, FIELDS.fraterno_pagoMayo, "Pago Mayo 2026")).length;
 
-      const fechaEvento = evento?.fields[FIELDS.evento_inicio]
-        ? new Date(evento.fields[FIELDS.evento_inicio]).toLocaleDateString("es-BO", { weekday: "long", day: "numeric", month: "long" })
+      const fechaEventoValue = evento && fieldValue(evento.fields, FIELDS.evento_inicio, "Inicio");
+      const fechaEvento = fechaEventoValue
+        ? new Date(fechaEventoValue).toLocaleDateString("es-BO", { weekday: "long", day: "numeric", month: "long" })
         : "próxima reunión";
-      const lugarEvento = evento?.fields[FIELDS.evento_lugar]?.name ?? "Frater Palo Santo";
+      const lugarEvento = evento ? fieldValue(evento.fields, FIELDS.evento_lugar, "Lugar")?.name ?? "Frater Palo Santo" : "Frater Palo Santo";
 
       const bullets = pending.map(n => `• ${n}`).join("\n");
 
       const msg = [
-        `Ya van ${pagoTotal} confirmados 🔥 Falta la cuota de ${concepto?.fields[FIELDS.cobro_nombre] ?? "mayo"} de:`,
+        `Ya van ${pagoTotal} confirmados 🔥 Falta la cuota de ${concepto ? fieldValue(concepto.fields, FIELDS.cobro_nombre, "Name") ?? "mayo" : "mayo"} de:`,
         "",
         bullets,
         "",
-        `Bs ${valor} a la cuenta BCP 70152191938316 (Carlos Lepesqueur), motivo *${concepto?.fields[FIELDS.cobro_nombre] ?? "Cuota Mayo 2026"}*.`,
+        `Bs ${valor} a la cuenta BCP 70152191938316 (Carlos Lepesqueur), motivo *${concepto ? fieldValue(concepto.fields, FIELDS.cobro_nombre, "Name") ?? "Cuota Mayo 2026" : "Cuota Mayo 2026"}*.`,
         "",
         `${fechaEvento} — ${lugarEvento}. No se vengan sin pagar 😅`,
       ].join("\n");
