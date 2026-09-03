@@ -36,6 +36,51 @@ export function runSpark(args: string[], opts: RunOpts = {}): Promise<RunResult>
   });
 }
 
+// ponytail: heurística de texto, no confirmada contra el mensaje real del CLI (Spark
+// estaba corriendo durante el desarrollo). Si Spark deja de auto-abrirse, ajustar este regex.
+const NOT_RUNNING_RE = /can.?t access|not running|no running instance|econnrefused|failed to connect/i;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function openSparkDesktop(): Promise<void> {
+  return new Promise((resolve) => {
+    execFile("open", ["-a", "Spark Desktop"], () => resolve());
+  });
+}
+
+/** Como runSpark, pero si el fallo indica que Spark Desktop no está corriendo, lo abre y reintenta. */
+export async function runSparkAutoOpen(args: string[], opts: RunOpts = {}): Promise<RunResult> {
+  let result = await runSpark(args, opts);
+  if (result.exitCode === 0 || !NOT_RUNNING_RE.test(`${result.stdout} ${result.stderr}`)) {
+    return result;
+  }
+  await openSparkDesktop();
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    await sleep(1_500);
+    result = await runSpark(args, opts);
+    if (result.exitCode === 0 || !NOT_RUNNING_RE.test(`${result.stdout} ${result.stderr}`)) break;
+  }
+  return result;
+}
+
+/** Extrae message IDs de la salida tabular de `spark emails` (primera columna numérica de cada fila). */
+export function parseEmailIds(output: string): string[] {
+  const ids: string[] = [];
+  for (const line of output.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+\S/);
+    if (m) ids.push(m[1]);
+  }
+  return ids;
+}
+
+/** Extrae los emails de cuenta de la salida de `spark accounts` (líneas "Email Account: x@y.com ..."). */
+export function parseAccountEmails(output: string): string[] {
+  return [...output.matchAll(/^Email Account:\s+(\S+)/gm)].map((m) => m[1]);
+}
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -288,7 +333,86 @@ const WRITE_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "triageInboxDiagnostico",
+    description:
+      "Triage mecánico del inbox (skill procesar-inbox, pasos 1-3). Por cada cuenta: excluye pineados, archiva AUTOMÁTICO lo que ya está LEÍDO en newsletter+notification (nunca priority/personal, nunca pineados), y devuelve sin tocar el texto crudo de: no-leídos de newsletter/notification (para armar el resumen y preguntarle a Cal qué archivar) y personal+priority (para que Cal los revise, nunca se archivan desde acá). Abre Spark Desktop solo si no está corriendo. Args: { cuentas? } — si se omite, se descubren todas las cuentas con `accounts`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cuentas: { type: "array", items: { type: "string" }, description: "Emails de cuenta a procesar (ej. 'carlos@lepesqueur.net'). Si se omite, se descubren todas." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "archiveEmails",
+    description:
+      "Archiva en bulk una lista de message IDs (spark action archive). Usar SOLO con IDs que Cal confirmó explícitamente — nunca para priority/personal ni para el resto de no-leídos sin que Cal los haya visto y elegido.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        messageIds: { type: "array", items: { type: "string" }, description: "IDs de mensaje a archivar" },
+      },
+      required: ["messageIds"],
+      additionalProperties: false,
+    },
+  },
 ];
+
+export interface DiagnosticoCuenta {
+  account: string;
+  pinnedCount: number;
+  archivedCount: number;
+  archiveError: string | null;
+  unreadNewsletter: string;
+  unreadNotification: string;
+  personal: string;
+  priority: string;
+}
+
+// ponytail: usa runSpark (sin auto-open) a propósito — el caller (dispatcher de
+// triageInboxDiagnostico) ya hizo un warmup con runSparkAutoOpen antes de loopear cuentas.
+// Si cada una de estas ~8 llamadas por cuenta reintentara con open+15s propio, un cold-start
+// de Spark sumaría minutos en vez de una sola espera. Si se llega a llamar diagnosticoCuenta
+// sin ese warmup previo, volver a runSparkAutoOpen acá.
+/** Diagnóstico + archivado automático de una cuenta (skill procesar-inbox, pasos 1-3). */
+export async function diagnosticoCuenta(account: string): Promise<DiagnosticoCuenta> {
+  const inbox = `${account}:Inbox`;
+
+  const pinnedRes = await runSpark(["emails", inbox, "--filter", "is:pinned", "--page-size", "50"]);
+  const pinnedIds = new Set(parseEmailIds(pinnedRes.stdout));
+
+  const readIds = new Set<string>();
+  for (const cat of ["newsletter", "notification"]) {
+    const r = await runSpark(["emails", inbox, "--filter", `category:${cat} is:read`, "--page-size", "200"]);
+    for (const id of parseEmailIds(r.stdout)) if (!pinnedIds.has(id)) readIds.add(id);
+  }
+
+  let archivedCount = 0;
+  let archiveError: string | null = null;
+  if (readIds.size > 0) {
+    const r = await runSpark(["action", "archive", ...readIds]);
+    if (r.exitCode === 0) archivedCount = readIds.size;
+    else archiveError = (r.stderr || r.stdout).slice(0, 500);
+  }
+
+  const unreadNewsletter = await runSpark(["emails", inbox, "--filter", "category:newsletter is:unread", "--page-size", "50"]);
+  const unreadNotification = await runSpark(["emails", inbox, "--filter", "category:notification is:unread", "--page-size", "50"]);
+  const personal = await runSpark(["emails", inbox, "--filter", "category:personal", "--page-size", "50"]);
+  const priority = await runSpark(["emails", inbox, "--filter", "category:priority", "--page-size", "50"]);
+
+  return {
+    account,
+    pinnedCount: pinnedIds.size,
+    archivedCount,
+    archiveError,
+    unreadNewsletter: unreadNewsletter.stdout.trim(),
+    unreadNotification: unreadNotification.stdout.trim(),
+    personal: personal.stdout.trim(),
+    priority: priority.stdout.trim(),
+  };
+}
 
 const server = new Server(
   { name: "spark", version: "0.1.0" },
@@ -306,11 +430,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     // Read-only tools
     if (name === "listAccounts") {
-      return toMcpResponse(await runSpark(["accounts"]));
+      return toMcpResponse(await runSparkAutoOpen(["accounts"]));
     }
     if (name === "listFolders") {
       const cli = ["folders", ...(a.account ? [String(a.account)] : [])];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "listEmails") {
       const cli = ["emails"];
@@ -322,15 +446,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...optFlag("--order", a.order),
         ...boolFlag("--new-senders", a.newSenders),
       );
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "searchEmails") {
       const cli = ["search", String(a.about), ...optFlag("--filter", a.filter), ...optFlag("--in", a.in)];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "readThread") {
       const cli = ["thread", ...boolFlag("--download-attachments", a.downloadAttachments), String(a.id)];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "listEvents") {
       const cli = [
@@ -340,7 +464,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...optFlag("--account", a.account),
         ...optFlag("--calendar", a.calendar),
       ];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "findAvailability") {
       const cli = [
@@ -350,21 +474,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...optFlag("--duration", a.duration),
         ...repeatFlag("--attendee", a.attendees),
       ];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "searchContacts") {
-      return toMcpResponse(await runSpark(["contacts", String(a.query)]));
+      return toMcpResponse(await runSparkAutoOpen(["contacts", String(a.query)]));
     }
     if (name === "listTeams") {
       const cli = ["team", ...(a.team ? [String(a.team)] : [])];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "listMeetings") {
       const cli = ["meetings", ...optFlag("--from", a.from), ...optFlag("--to", a.to)];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "readMeeting") {
-      return toMcpResponse(await runSpark(["meeting", String(a.id)]));
+      return toMcpResponse(await runSparkAutoOpen(["meeting", String(a.id)]));
     }
 
     // Write tools (require triage access — natural error from CLI otherwise)
@@ -382,7 +506,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...optFlag("--edit", a.edit),
         ...repeatFlag("--attach", a.attach),
       ];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "postComment") {
       const cli = ["comment", String(a.threadId)];
@@ -393,17 +517,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...repeatFlag("--attach", a.attach),
         ...optFlag("--edit", a.edit),
       );
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "emailAction") {
       const extra = Array.isArray(a.extraArgs) ? a.extraArgs.map(String) : [];
       const cli = ["action", String(a.action), String(a.messageId), ...extra];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
     }
     if (name === "contactAction") {
       const extra = Array.isArray(a.extraArgs) ? a.extraArgs.map(String) : [];
       const cli = ["contact-action", String(a.action), String(a.email), ...extra];
-      return toMcpResponse(await runSpark(cli));
+      return toMcpResponse(await runSparkAutoOpen(cli));
+    }
+    if (name === "triageInboxDiagnostico") {
+      // Warmup único: garantiza que Spark esté abierto ANTES del loop de cuentas (ver
+      // comentario ponytail en diagnosticoCuenta) — evita que un cold-start multiplique
+      // el retry de 15s por cada una de las ~8 llamadas por cuenta.
+      const accRes = await runSparkAutoOpen(["accounts"]);
+      let cuentas = Array.isArray(a.cuentas) ? a.cuentas.map(String) : [];
+      if (!cuentas.length) cuentas = parseAccountEmails(accRes.stdout);
+      const resultados: DiagnosticoCuenta[] = [];
+      for (const cuenta of cuentas) {
+        try {
+          resultados.push(await diagnosticoCuenta(cuenta));
+        } catch (err) {
+          resultados.push({
+            account: cuenta,
+            pinnedCount: 0,
+            archivedCount: 0,
+            archiveError: `Excepción procesando ${cuenta}: ${(err as Error).message}`,
+            unreadNewsletter: "",
+            unreadNotification: "",
+            personal: "",
+            priority: "",
+          });
+        }
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify({ cuentas: resultados }, null, 2) }] };
+    }
+    // ponytail: no valida server-side que los IDs sean de categoría newsletter/notification —
+    // la regla "priority/personal nunca se archivan sin confirmación" vive solo en el prompt
+    // de Jano (mismo trust model que ya tenía emailAction, no es una regresión). Si algún día
+    // se ve un caso real de archivado indebido, la mitigación es un lookup de categoría acá
+    // antes de archivar, rechazando priority/personal salvo un flag explícito de "confirmado".
+    if (name === "archiveEmails") {
+      const ids = Array.isArray(a.messageIds) ? a.messageIds.map(String) : [];
+      if (!ids.length) {
+        return { isError: true, content: [{ type: "text" as const, text: "messageIds vacío" }] };
+      }
+      return toMcpResponse(await runSparkAutoOpen(["action", "archive", ...ids]));
     }
 
     return { isError: true, content: [{ type: "text" as const, text: `Unknown tool: ${name}` }] };
