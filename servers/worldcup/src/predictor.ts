@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 const PRED_DIR =
-  process.env.PREDICTOR_DIR ?? `${homedir()}/Claude Projects/Personal/Apps/Predictor Mundial`;
+  process.env.PREDICTOR_DIR ?? `${homedir()}/AI Projects/Personal/Apps/Predictor Mundial`;
 const PY = `${PRED_DIR}/.venv/bin/python`;
 
 function run(args: string[], timeoutMs: number): Record<string, unknown> {

@@ -16,7 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { spawn } from "node:child_process";
 
-const CLI_PATH = `${process.env.HOME}/Claude Projects/Personal/Apps/Aeropuertos Bolivia/cli/consultar-vuelo.mjs`;
+const CLI_PATH = `${process.env.HOME}/AI Projects/Personal/Apps/Aeropuertos Bolivia/cli/consultar-vuelo.mjs`;
 const NODE_BIN = "/usr/local/bin/node";
 const TIMEOUT_MS = 15_000;
 

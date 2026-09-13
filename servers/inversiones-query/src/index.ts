@@ -316,7 +316,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const notes = args["notes"] ? String(args["notes"]) : "";
         const dryRun = args["dryRun"] !== false;
 
-        const INVERSIONES_DIR = "/Users/calepes/Claude Projects/Personal/Agents/Inversiones";
+        const INVERSIONES_DIR = "/Users/calepes/AI Projects/Personal/Agents/Inversiones";
         const pythonBin = `${INVERSIONES_DIR}/.venv/bin/python`;
 
         const spawnArgs = ["-m", "inversiones.cli", "record", side,
